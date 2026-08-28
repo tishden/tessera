@@ -5,7 +5,7 @@
 
 For a library that does all of its work during translation, "performance" means compile time and
 compiler memory. This script compiles ``benchmarks/compile_time/bench_tu.cpp`` once per
-(implementation, component count, deduplication backend) and records the wall-clock time and the
+(implementation, component count, algebra implementation) and records the wall-clock time and the
 peak resident set size of the compiler process itself -- measured per process with ``os.wait4``,
 not sampled, so the numbers are exact and reproducible.
 
@@ -39,11 +39,11 @@ IMPLEMENTATIONS = {
 
 BACKEND_MACRO = {
     "auto": None,
-    "portable": "TESSERA_DEDUP_BACKEND=TESSERA_DEDUP_PORTABLE",
-    "builtin": "TESSERA_DEDUP_BACKEND=TESSERA_DEDUP_BUILTIN",
-    "fold": "TESSERA_DEDUP_BACKEND=TESSERA_DEDUP_FOLD",
+    "portable": "TESSERA_ALGEBRA_BACKEND=TESSERA_ALGEBRA_PORTABLE",
+    "builtin": "TESSERA_ALGEBRA_BACKEND=TESSERA_ALGEBRA_BUILTIN",
+    "fold": "TESSERA_ALGEBRA_BACKEND=TESSERA_ALGEBRA_FOLD",
     # Needs a toolchain with P2996; pass the compiler's reflection flag through --extra.
-    "reflection": "TESSERA_DEDUP_BACKEND=TESSERA_DEDUP_REFLECTION",
+    "reflection": "TESSERA_ALGEBRA_BACKEND=TESSERA_ALGEBRA_REFLECTION",
 }
 
 
@@ -148,7 +148,7 @@ def main() -> int:
     memory: dict = {}
 
     for name, impl in IMPLEMENTATIONS.items():
-        # Only the assembling implementation depends on the deduplication backend; measuring the
+        # Only the assembling implementation depends on the algebra implementation; measuring the
         # others once per backend would just repeat the same number.
         applicable = backends if impl == IMPLEMENTATIONS["assembly"] else ["auto"]
         for backend in applicable:

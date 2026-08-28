@@ -70,35 +70,39 @@ So deduplication and flattening are free aliases (`unique_t<L>`, `flatten_t<Ts..
 member that does real work (`filter`, `transform`, `flat_map`, `contains`, `nth`) is a template.
 The rest of the members are constants and one-line aliases that cost nothing.
 
-## 4. Concatenation without an accumulator
+## 4. One algebra, two implementations
 
-`filter`, `flat_map` and the merge step all end up joining a list per element. Written the textbook
-way — fold two lists at a time — each input list adds one intermediate specialization, each one
-element longer than the last: quadratic in retained types, linear in instantiation depth.
+Everything the public types do with lists goes through five operations, and nothing else:
 
-`detail::concat` instead computes a *plan* in a consteval loop — for every element of the result,
-which input list it comes from and at which position — and produces the result in a single pack
-expansion over that plan. One instantiation, constant depth, no accumulator.
+| operation | meaning |
+|---|---|
+| `unique_into<Target, Ts...>` | drop duplicates, feed the survivors to `Target` |
+| `splice_unique_into<Target, Ls...>` | splice the lists' elements, drop duplicates, feed `Target` |
+| `concat_into<Target, Ls...>` | concatenate, keep duplicates, feed `Target` |
+| `select_into<Target, Mask, Ts...>` | keep the elements whose mask bit is set |
+| `nth<I, Ts...>` | the I-th element |
 
-## 5. Deduplication: four backends and a hybrid
+Two things about the shape of that list matter.
 
-Deduplication is the expensive part of assembly, so it is isolated in `dedup.hpp` behind one alias
-(`detail::deduplicated_t`) with four implementations. All of them produce the identical type: the
-first occurrence of each type survives, in its original position.
+**They take the target template.** `tessera::of<...>` produces a `mosaic` in one step instead of
+building a `type_list` that is immediately converted; `mosaic::flat_map` likewise. Every fused
+operation is one class specialization the compiler does not have to create, name and keep.
 
-**FOLD** is the obvious one — append a type if the accumulator does not hold it. Four lines,
-and the fastest thing there is for short lists. It also has one instantiation level per element, so
-it hits the compiler's 1024-deep limit at a few hundred components, and it retains one list per
-step.
+**They are the whole seam.** `detail::tmpl` implements them with template metaprogramming,
+`detail::refl` with static reflection, and `algebra.hpp` picks one with a namespace alias. Neither
+`type_list` nor `mosaic` mentions either implementation.
 
-**PORTABLE**, the default, is a hybrid. Lists up to `fold_threshold` (256) elements go straight to
-the fold, which is what keeps the constant factor low; longer lists are halved, each half
-deduplicated, and the results merged. Depth is bounded by the threshold plus a logarithmic number of
-merge levels, so nothing on the way to a few thousand types comes near the limit.
+### The template implementation
 
-The merge step is where the second trick lives. Testing whether a candidate occurs in the left half
-with `is_same` costs one instantiation per element, so a merge would cost `|A| × |B|`. Instead the
-left half — already unique — is turned into a class that inherits one tag per element:
+**Deduplication** is the expensive part. `TESSERA_ALGEBRA_FOLD` is the obvious way — append a type
+if the accumulator does not hold it. Four lines, the fastest thing there is for short lists, one
+instantiation level per element, and therefore dead at a few hundred components: it runs past the
+compiler's 1024-deep limit. `TESSERA_ALGEBRA_PORTABLE`, the default, is a hybrid: lists up to
+`fold_threshold` (256) go to the fold, longer ones are halved, deduplicated and merged.
+
+The merge is where the second trick lives. Testing membership with `is_same` would cost `|A| × |B|`
+instantiations, so the left half — already unique — becomes a class that inherits one tag per
+element:
 
 ```cpp
 template<class T> struct type_tag {};
@@ -108,25 +112,49 @@ template<class T, class Set>
 inline constexpr bool is_member_of = std::is_base_of_v<type_tag<T>, Set>;
 ```
 
-Membership is then a base-class lookup, which the compiler answers from the table it built once for
-the set. The construction is only well-formed because the left half is unique — repeating a base
-class is ill-formed — which is exactly the invariant the algorithm maintains.
+Membership is then a base-class lookup, answered from the table the compiler built once. The
+construction is only well-formed because the left half is unique — repeating a base class is
+ill-formed — which is exactly the invariant the algorithm maintains.
 
-**BUILTIN** replaces all of it with `__builtin_dedup_pack<Ts...>` where Clang 22 provides it: one
-expansion, no library recursion, and — as the benchmarks show — roughly half the compile time and a
-third of the compiler memory of the portable path at 256 components.
+`TESSERA_ALGEBRA_BUILTIN` replaces the deduplication with `__builtin_dedup_pack<Ts...>` where Clang
+22 provides it: one expansion, no library recursion.
 
-**REFLECTION** is the P2996 sketch: `std::vector<std::meta::info>`, an ordinary loop, one
-`substitute`. See [reflection.md](reflection.md).
+**Concatenation** is the other hot spot, because filter, flat_map and the merge all funnel through
+it, joining a list per element. Folded two lists at a time it costs one intermediate specialization
+per input list, each one element longer than the last. Instead a `consteval` loop computes, for
+every element of the result, which input list it comes from and at which position, and one pack
+expansion over that plan produces the answer: one instantiation, constant depth, no accumulator.
 
-The choice is made in `config.hpp` and nowhere else; a build system can pin it
-(`-DTESSERA_DEDUP_BACKEND=PORTABLE`), which is how the benchmark measures one against another on the
-same toolchain. Every backend the toolchain can compile is compiled — selection only decides which
-one `deduplicated_t` forwards to — so `tests/dedup_backends.test.cpp` can instantiate all of them
-side by side and assert they produce the identical type, which is the property the whole
-substitution rests on.
+### The reflection implementation
 
-## 6. Keeping vendor extensions contained
+`detail::refl` computes with values rather than types. Each operation is one `consteval` function
+that builds a `std::vector<std::meta::info>`, does the set algebra with an ordinary loop, and calls
+`std::meta::substitute` once:
+
+```cpp
+template<template<class...> class Target, class... Ls>
+consteval std::meta::info splice_unique_into_info() {
+    std::vector<std::meta::info> kept;
+    const auto splice = [&kept](std::meta::info list) {
+        for (const std::meta::info element : std::meta::template_arguments_of(list)) {
+            push_unique(kept, element);
+        }
+    };
+    (splice(^^Ls), ...);
+    return std::meta::substitute(^^Target, kept);
+}
+```
+
+Nothing intermediate is a type, so nothing intermediate is retained. The measured effect is in
+[benchmarks.md](benchmarks.md); the constraints that shape the code — a splice operand may not still
+own a vector, feature probes may not call `consteval` functions — are in
+[reflection.md](reflection.md).
+
+Note what does *not* move: a predicate like `Predicate<T>::value` is the user's template, and the
+compiler instantiates it once per element either way. Only the list surgery changes hands, which is
+why `filter` passes a bit mask into the algebra rather than the predicate itself.
+
+## 5. Keeping vendor extensions contained
 
 Two Clang builtins are used when available — `__builtin_dedup_pack` and `__type_pack_element` — and
 both are detected in `config.hpp` behind `defined(__clang__) && __has_builtin(...)`, exposed as
@@ -134,7 +162,7 @@ both are detected in `config.hpp` behind `defined(__clang__) && __has_builtin(..
 hybrid deduplication above, and pack indexing through a tagged-base indexer that resolves an index
 to a type by overload resolution rather than by walking the pack.
 
-## 7. What it costs the compiler
+## 6. What it costs the compiler
 
 Numbers are in [benchmarks.md](benchmarks.md); the shape of them is:
 
@@ -146,7 +174,7 @@ Numbers are in [benchmarks.md](benchmarks.md); the shape of them is:
   per translation unit — which is the range this design is for. Beyond that the answer is not a
   faster metafunction, it is fewer types per translation unit.
 
-## 8. Deliberately left out
+## 7. Deliberately left out
 
 * **Index-based access as the primary API.** `nth<I>` exists for the algebra; the container is
   addressed by type on purpose.

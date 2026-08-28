@@ -4,7 +4,7 @@
 cmake_minimum_required(VERSION 3.20)
 
 project(tessera
-        VERSION 1.0.0
+        VERSION 1.1.0
         DESCRIPTION "Compile-time type-keyed container and type-list algebra for C++23"
         HOMEPAGE_URL "https://github.com/tishden/tessera"
         LANGUAGES CXX)
@@ -24,10 +24,14 @@ option(TESSERA_BUILD_EXAMPLES   "Build the examples"        ${TESSERA_IS_TOP_LEV
 option(TESSERA_BUILD_BENCHMARKS "Build the benchmarks"      ${TESSERA_IS_TOP_LEVEL})
 option(TESSERA_INSTALL          "Generate install rules"    ${TESSERA_IS_TOP_LEVEL})
 
-# AUTO picks the best backend the compiler offers; the other values pin it (used by the
-# compile-time benchmark to measure one backend against another on the same toolchain).
-set(TESSERA_DEDUP_BACKEND "AUTO" CACHE STRING "Deduplication backend: AUTO | PORTABLE | BUILTIN | REFLECTION")
-set_property(CACHE TESSERA_DEDUP_BACKEND PROPERTY STRINGS AUTO PORTABLE BUILTIN REFLECTION)
+# AUTO picks the best implementation the compiler offers; the other values pin it (used by the
+# compile-time benchmark to measure one against another on the same toolchain).
+if(DEFINED TESSERA_DEDUP_BACKEND AND NOT DEFINED TESSERA_ALGEBRA_BACKEND)
+    set(TESSERA_ALGEBRA_BACKEND "${TESSERA_DEDUP_BACKEND}")  # the option's former name
+endif()
+set(TESSERA_ALGEBRA_BACKEND "AUTO" CACHE STRING
+    "List-algebra implementation: AUTO | PORTABLE | BUILTIN | REFLECTION | FOLD")
+set_property(CACHE TESSERA_ALGEBRA_BACKEND PROPERTY STRINGS AUTO PORTABLE BUILTIN REFLECTION FOLD)
 
 add_library(tessera INTERFACE)
 add_library(tessera::tessera ALIAS tessera)
@@ -37,9 +41,9 @@ target_include_directories(tessera INTERFACE
         $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
         $<INSTALL_INTERFACE:include>)
 
-if(NOT TESSERA_DEDUP_BACKEND STREQUAL "AUTO")
-    target_compile_definitions(tessera INTERFACE TESSERA_DEDUP_BACKEND=TESSERA_DEDUP_${TESSERA_DEDUP_BACKEND})
-    if(TESSERA_DEDUP_BACKEND STREQUAL "REFLECTION")
+if(NOT TESSERA_ALGEBRA_BACKEND STREQUAL "AUTO")
+    target_compile_definitions(tessera INTERFACE TESSERA_ALGEBRA_BACKEND=TESSERA_ALGEBRA_${TESSERA_ALGEBRA_BACKEND})
+    if(TESSERA_ALGEBRA_BACKEND STREQUAL "REFLECTION")
         target_compile_definitions(tessera INTERFACE TESSERA_ENABLE_REFLECTION_BACKEND=1)
     endif()
 endif()

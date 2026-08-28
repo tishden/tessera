@@ -7,7 +7,7 @@
 #   export TESSERA_P2996_ROOT=$PWD/toolchain
 #   cmake -S . -B build-reflection -G Ninja \
 #         -DCMAKE_TOOLCHAIN_FILE=cmake/toolchains/clang-p2996.cmake \
-#         -DTESSERA_DEDUP_BACKEND=REFLECTION
+#         -DTESSERA_ALGEBRA_BACKEND=REFLECTION
 #
 # Why a toolchain file rather than a few -D flags: CMake decides the -std flag itself, and no
 # released CMake knows C++26 for this compiler, so it silently pins -std=gnu++2b — which turns

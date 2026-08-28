@@ -9,6 +9,7 @@
 #include <type_traits>
 #include <utility>
 
+#include "tessera/algebra.hpp"
 #include "tessera/config.hpp"
 #include "tessera/type_list.hpp"
 #include "tessera/value_list.hpp"
@@ -225,29 +226,34 @@ public:
     template<template<class...> class Target>
     using into = Target<Ts...>;
 
+    // Each of these produces the mosaic directly rather than a type_list that is then converted:
+    // one specialization instead of two, on every implementation of the algebra.
+
     /// @brief This mosaic plus @p Us, flattened and deduplicated.
     template<class... Us>
-    using add = typename flatten_t<type_list<Ts...>, Us...>::template into<::tessera::mosaic>;
+    using add = detail::ops::splice_unique_into<::tessera::mosaic, type_list<Ts...>, elements_of_t<Us>...>;
 
     /// @brief The elements satisfying `Predicate<T>::value`.
     template<template<class...> class Predicate>
-    using filter = typename types::template filter<Predicate>::template into<::tessera::mosaic>;
+    using filter =
+        detail::ops::select_into<::tessera::mosaic,
+                                 std::integer_sequence<bool, static_cast<bool>(Predicate<Ts>::value)...>, Ts...>;
 
     /// @brief `Function<T>` for every element type, deduplicated.
     template<template<class...> class Function>
-    using transform = typename types::template transform<Function>::template into<::tessera::mosaic>;
+    using transform = detail::ops::unique_into<::tessera::mosaic, Function<Ts>...>;
 
     /// @brief `Function<T>` for every element type, with list-like results spliced in.
     ///
     /// The workhorse of system assembly: `Services = Systems::flat_map<dependencies_of>`.
     template<template<class...> class Function>
-    using flat_map = typename types::template flat_map<Function>::template into<::tessera::mosaic>;
+    using flat_map = detail::ops::splice_unique_into<::tessera::mosaic, elements_of_t<Function<Ts>>...>;
 
     /// @brief Collects a constant from every element into a `tessera::value_list`, deduplicated:
     ///        `Extractor<T>::value` must be a constant convertible to @p E.
     template<class E, template<class...> class Extractor>
-    using values =
-        to_value_list_t<E, unique_t<type_list<std::integral_constant<E, static_cast<E>(Extractor<Ts>::value)>...>>>;
+    using values = to_value_list_t<
+        E, detail::ops::unique_into<type_list, std::integral_constant<E, static_cast<E>(Extractor<Ts>::value)>...>>;
 
 private:
     template<class T, class Handler>
@@ -268,11 +274,11 @@ private:
 /// static_assert(std::same_as<Services, tessera::mosaic<Clock, FrameBuffer, AssetCache>>);
 /// @endcode
 template<class... Ts>
-using of = typename flatten_t<Ts...>::template into<mosaic>;
+using of = detail::ops::splice_unique_into<mosaic, elements_of_t<Ts>...>;
 
 /// @brief `tessera::of` with a mapping applied to every type first.
 template<template<class...> class Function, class... Ts>
-using mapped_of = typename flatten_t<Function<Ts>...>::template into<mosaic>;
+using mapped_of = detail::ops::splice_unique_into<mosaic, elements_of_t<Function<Ts>>...>;
 
 }  // namespace tessera
 

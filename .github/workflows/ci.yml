@@ -40,7 +40,7 @@ jobs:
         run: >
           cmake -S . -B build -G Ninja
           -DCMAKE_CXX_COMPILER=${{ matrix.compiler }}
-          -DTESSERA_DEDUP_BACKEND=${{ matrix.backend }}
+          -DTESSERA_ALGEBRA_BACKEND=${{ matrix.backend }}
 
       - name: Build
         run: cmake --build build

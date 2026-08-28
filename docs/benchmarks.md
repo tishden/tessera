@@ -39,21 +39,21 @@ Clang 22.1.8, `-std=c++23 -O0`, best of one run per cell, x86-64 Linux.
 
 | components | headers only | std::tuple | mosaic | assembly (portable) | assembly (builtin) | assembly (fold) |
 |---|---|---|---|---|---|---|
-|         16 |         0.41 |       0.41 |   0.40 |                0.47 |               0.45 |            0.48 |
-|         32 |         0.35 |       0.52 |   0.50 |                0.66 |               0.60 |            0.65 |
-|         64 |         0.34 |       0.83 |   0.77 |                1.23 |               0.95 |            1.31 |
-|        128 |         0.34 |       1.47 |   1.56 |                3.15 |               2.08 |            3.10 |
-|        256 |         0.34 |       3.60 |   4.87 |                9.23 |               5.86 |       **depth** |
+|         16 |         0.34 |       0.38 |   0.37 |                0.47 |               0.45 |            0.47 |
+|         32 |         0.33 |       0.51 |   0.47 |                0.65 |               0.57 |            0.64 |
+|         64 |         0.32 |       0.80 |   0.74 |                1.18 |               0.95 |            1.19 |
+|        128 |         0.33 |       1.45 |   1.50 |                2.93 |               2.07 |            2.87 |
+|        256 |         0.33 |       3.46 |   4.54 |                8.98 |               5.71 |       **depth** |
 
 #### Peak compiler memory (MiB, RSS)
 
 | components | headers only | std::tuple | mosaic | assembly (portable) | assembly (builtin) | assembly (fold) |
 |---|---|---|---|---|---|---|
-|         16 |           92 |         96 |     92 |                  96 |                 94 |              95 |
-|         32 |           91 |         98 |     94 |                 105 |                 98 |             105 |
-|         64 |           91 |        113 |    103 |                 136 |                114 |             135 |
-|        128 |           91 |        162 |    133 |                 268 |                157 |             239 |
-|        256 |           91 |        315 |    242 |                 793 |                310 |       **depth** |
+|         16 |           90 |         98 |     94 |                  95 |                 95 |              95 |
+|         32 |           92 |         98 |     94 |                 105 |                100 |             105 |
+|         64 |           92 |        114 |    101 |                 136 |                113 |             135 |
+|        128 |           92 |        162 |    128 |                 270 |                157 |             241 |
+|        256 |           91 |        316 |    227 |                 793 |                305 |       **depth** |
 
 **depth** — the compilation fails: the linear fold needs one instantiation level per element and
 runs past Clang's 1024-deep limit once the pre-deduplication list reaches ~1000 types (4N at
@@ -79,16 +79,16 @@ N = 256).
   portable backend still compiles 512 components (≈20 s, 2.9 GiB) and 1024 (≈77 s, 11 GiB) — which
   is where you find out that the limit is memory, not correctness.
 
-## 1b. The reflection backend, measured
+## 1b. The reflection implementation, measured
 
-The P2996 backend cannot be built by any released compiler, so it gets its own run on the reference
-implementation — the Bloomberg P2996 fork of Clang, as published by Compiler Explorer. That build is
-based on Clang 21 and has no `__builtin_dedup_pack`, so the comparison here is reflection against
-the two template implementations on one toolchain:
+The reflection implementation cannot be built by any released compiler, so it gets its own run on
+the reference implementation — the Bloomberg P2996 fork of Clang, as published by Compiler Explorer.
+That build is based on Clang 21 and has no `__builtin_dedup_pack`, so the comparison here is
+reflection against the two template implementations on one toolchain:
 
 ```bash
 python3 benchmarks/run_compile_bench.py \
-        --compiler <toolchain>/bin/clang++ --std c++26 --sizes 16,32,64,128 \
+        --compiler <toolchain>/bin/clang++ --std c++26 --sizes 16,32,64,128,256 \
         --backends portable,fold,reflection --repeats 1 \
         --extra "-O0 -stdlib=libc++ -freflection-latest -fconstexpr-steps=1000000000"
 ```
@@ -97,32 +97,51 @@ python3 benchmarks/run_compile_bench.py \
 
 | components | headers only | std::tuple | mosaic | assembly (portable) | assembly (fold) | assembly (reflection) |
 |---|---|---|---|---|---|---|
-|         16 |         1.34 |       0.26 |   1.39 |                1.49 |            1.47 |              **1.48** |
-|         32 |         1.33 |       0.33 |   1.47 |                1.67 |            1.69 |              **1.64** |
-|         64 |         1.33 |       0.52 |   1.82 |                2.15 |            2.22 |              **2.19** |
-|        128 |         1.34 |       0.86 |   2.66 |                3.79 |            3.77 |              **3.65** |
+|         16 |         1.38 |       0.27 |   1.40 |                1.52 |            1.51 |                  1.53 |
+|         32 |         1.31 |       0.33 |   1.45 |                1.73 |            1.70 |                  1.73 |
+|         64 |         1.32 |       0.52 |   1.74 |                2.23 |            2.23 |                  2.23 |
+|        128 |         1.36 |       0.84 |   2.55 |                3.99 |            3.84 |              **3.70** |
+|        256 |         1.38 |       1.85 |   5.59 |                9.85 |           depth |              **9.00** |
 
 #### Peak compiler memory (MiB)
 
 | components | headers only | std::tuple | mosaic | assembly (portable) | assembly (fold) | assembly (reflection) |
 |---|---|---|---|---|---|---|
-|         16 |          135 |        101 |    137 |                 138 |             138 |               **138** |
-|         32 |          135 |        105 |    138 |                 142 |             142 |               **139** |
-|         64 |          135 |        112 |    142 |                 172 |             172 |               **151** |
-|        128 |          135 |        146 |    174 |                 306 |             277 |               **197** |
+|         16 |          126 |        101 |    136 |                 133 |             136 |                   129 |
+|         32 |          126 |        105 |    136 |                 143 |             142 |               **133** |
+|         64 |          134 |        112 |    139 |                 174 |             173 |               **142** |
+|        128 |          134 |        146 |    166 |                 308 |             277 |               **173** |
+|        256 |          126 |        279 |    267 |                 836 |           depth |               **282** |
 
-What this says, and what it does not:
+### What the assembly step itself costs
 
-* **The memory claim holds.** At 128 components the reflection backend costs 197 MiB against 306 MiB
-  for the portable one — a third less, and the gap widens with N, because deduplicating a vector of
-  `std::meta::info` creates no intermediate template specializations for the compiler to retain.
-* **The time claim does not, yet.** Reflection is within a few percent of the template backends, not
-  ahead of them. Constant evaluation is doing quadratic work that the fold does too; the advantage
-  is in what is *not* retained, not in what is computed.
-* **`headers only` costs 1.34 s here** against 0.26 s for the `std::tuple` translation unit, because
-  including `<meta>` and `<vector>` from this libc++ dominates a small TU. Compare columns against
-  that baseline, not against the numbers from the Clang 22 tables above — different compiler,
-  different standard library, different machine load.
+The `mosaic` column is the same work on every implementation — instantiating N slots and N accessor
+calls — so subtracting it isolates the part that actually changed hands: splicing, deduplicating and
+producing the type.
+
+| components | | templates | reflection | change |
+|---|---|---|---|---|
+| 128 | time   | 1.44 s  | 1.15 s | **−20 %** |
+| 128 | memory | 142 MiB | 7 MiB  | **−95 %** |
+| 256 | time   | 4.26 s  | 3.41 s | **−20 %** |
+| 256 | memory | 569 MiB | 15 MiB | **−97 %** |
+
+That is the shape of the result, and it is worth being precise about what it means:
+
+* **The memory cost of assembly nearly disappears.** Deduplicating a `std::vector<std::meta::info>`
+  and substituting once leaves nothing behind; the template implementation creates a class
+  specialization for every intermediate list, and the compiler keeps all of them. At 256 components
+  that is the difference between 569 MiB and 15 MiB, and the gap widens with N.
+* **Time falls by about a fifth, not by a factor.** Constant evaluation is doing the same quadratic
+  membership work the fold does, just without materializing types. Reflection is not a faster
+  algorithm here — it is a cheaper representation.
+* **The remaining cost is the container, not the algebra.** At 256 components the mosaic alone is
+  5.59 s of the 9.00 s total. Making the algebra free would not make the translation unit cheap;
+  fewer components per translation unit would.
+* **`headers only` costs 1.3 s on this toolchain** against 0.27 s for the `std::tuple` translation
+  unit, because including `<meta>` and `<vector>` from this libc++ dominates a small TU. Compare
+  columns against that baseline, not against the Clang 22 tables above — different compiler,
+  different standard library.
 * Clang's constant-evaluation budget has to be raised (`-fconstexpr-steps`); at the default the
   compiler reports the splice operand as "not a constant expression" once the list gets long.
 

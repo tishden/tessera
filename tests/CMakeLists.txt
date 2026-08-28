@@ -6,7 +6,7 @@ add_executable(tessera_tests
         type_list.test.cpp
         mosaic.test.cpp
         value_list.test.cpp
-        dedup_backends.test.cpp
+        algebra_backends.test.cpp
         reflect.test.cpp)
 
 target_link_libraries(tessera_tests PRIVATE tessera::tessera tessera_project_options)

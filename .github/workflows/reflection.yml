@@ -52,7 +52,7 @@ jobs:
           export TESSERA_P2996_ROOT=$PWD/toolchain
           cmake -S . -B build-reflection -G Ninja \
                 -DCMAKE_TOOLCHAIN_FILE=cmake/toolchains/clang-p2996.cmake \
-                -DTESSERA_DEDUP_BACKEND=REFLECTION
+                -DTESSERA_ALGEBRA_BACKEND=REFLECTION
           cmake --build build-reflection
           ctest --test-dir build-reflection --output-on-failure
           ./build-reflection/tests/tessera_tests | head -1   # must report the reflection backend
@@ -65,7 +65,7 @@ jobs:
           export TESSERA_P2996_ROOT=$PWD/toolchain
           cmake -S . -B build-portable -G Ninja \
                 -DCMAKE_TOOLCHAIN_FILE=cmake/toolchains/clang-p2996.cmake \
-                -DTESSERA_DEDUP_BACKEND=PORTABLE
+                -DTESSERA_ALGEBRA_BACKEND=PORTABLE
           cmake --build build-portable
           ctest --test-dir build-portable --output-on-failure
 

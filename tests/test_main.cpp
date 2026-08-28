@@ -8,6 +8,6 @@
 #include "check.hpp"
 
 int main() {
-    std::printf("tessera %s — dedup backend: %s\n\n", TESSERA_VERSION_STRING, tessera::dedup_backend_name);
+    std::printf("tessera %s — algebra: %s\n\n", TESSERA_VERSION_STRING, tessera::algebra_backend_name);
     return tessera_test::run_all();
 }

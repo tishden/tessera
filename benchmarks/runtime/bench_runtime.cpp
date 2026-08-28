@@ -192,7 +192,7 @@ void reportValueDispatch(std::size_t iterations) {
 }  // namespace
 
 int main() {
-    std::printf("tessera %s — %s\n\n", TESSERA_VERSION_STRING, tessera::dedup_backend_name);
+    std::printf("tessera %s — %s\n\n", TESSERA_VERSION_STRING, tessera::algebra_backend_name);
     reportMemory();
     reportSystemDispatch(2'000'000);
     reportValueDispatch(2'000'000);

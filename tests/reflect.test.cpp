@@ -46,6 +46,6 @@ static_assert(ConfigMosaic::contains<double>);
 }  // namespace
 #endif
 
-TESSERA_TEST(the_active_deduplication_backend_is_reported) {
-    CHECK(std::string_view{tessera::dedup_backend_name}.size() > 0);
+TESSERA_TEST(the_active_algebra_backend_is_reported) {
+    CHECK(std::string_view{tessera::algebra_backend_name}.size() > 0);
 }

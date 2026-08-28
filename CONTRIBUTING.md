@@ -29,17 +29,20 @@ suite is `static_assert`: if a test file compiles, the compile-time behaviour it
 Please also check the backends that your change can affect:
 
 ```bash
-cmake -S . -B build-portable -DTESSERA_DEDUP_BACKEND=PORTABLE && cmake --build build-portable
-cmake -S . -B build-fold     -DTESSERA_DEDUP_BACKEND=FOLD     && cmake --build build-fold
-# and, on Clang 22 or newer:
-cmake -S . -B build-builtin  -DTESSERA_DEDUP_BACKEND=BUILTIN  && cmake --build build-builtin
+cmake -S . -B build-portable -DTESSERA_ALGEBRA_BACKEND=PORTABLE && cmake --build build-portable
+cmake -S . -B build-fold     -DTESSERA_ALGEBRA_BACKEND=FOLD     && cmake --build build-fold
+# on Clang 22 or newer:
+cmake -S . -B build-builtin  -DTESSERA_ALGEBRA_BACKEND=BUILTIN  && cmake --build build-builtin
+# and, if you have a P2996 toolchain (docs/reflection.md explains how to get one):
+cmake -S . -B build-reflection -DCMAKE_TOOLCHAIN_FILE=cmake/toolchains/clang-p2996.cmake \
+      -DTESSERA_ALGEBRA_BACKEND=REFLECTION && cmake --build build-reflection
 ```
 
-All backends must produce *identical types*, not merely equivalent behaviour. That invariant is
-checked mechanically: `tests/dedup_backends.test.cpp` instantiates every implementation available on
-the current toolchain — including the Clang builtin and, where the compiler has P2996, the
-reflection one — on the same input and compares each against the reference fold. Adding a backend
-means adding one `static_assert` there.
+Both implementations must produce *identical types*, not merely equivalent behaviour. That invariant
+is checked mechanically: `tests/algebra_backends.test.cpp` instantiates every implementation the
+current toolchain can build — the template forms and, where the compiler has P2996, the reflection
+one — on the same input and compares them operation by operation. Adding an operation to the seam
+means adding it to both implementations and to that comparison.
 
 ## What a patch should include
 

@@ -13,11 +13,11 @@
 /// | `tessera/mosaic.hpp`       | `mosaic`, `of`, `broadcast`                                    |
 /// | `tessera/value_list.hpp`   | `value_list`, runtime → compile-time dispatch                  |
 /// | `tessera/reflect.hpp`      | `type_name`, the static-reflection seam                        |
-/// | `tessera/dedup.hpp`        | the deduplication backends                                     |
+/// | `tessera/algebra.hpp`      | the two implementations of the list algebra and their selection |
 /// | `tessera/config.hpp`       | feature detection and configuration macros                     |
 
+#include "tessera/algebra.hpp"
 #include "tessera/config.hpp"
-#include "tessera/dedup.hpp"
 #include "tessera/mosaic.hpp"
 #include "tessera/reflect.hpp"
 #include "tessera/type_list.hpp"

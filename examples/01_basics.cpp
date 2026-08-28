@@ -53,7 +53,7 @@ int main() {
 
     // The stateless policy costs nothing: the mosaic is as big as its stateful elements.
     std::printf("sizeof   : %zu (int + std::string + Timeout + a stateless policy)\n", sizeof(Session));
-    std::printf("backend  : %s\n", tessera::dedup_backend_name);
+    std::printf("backend  : %s\n", tessera::algebra_backend_name);
 
     return 0;
 }

@@ -13,7 +13,7 @@ stability promise. One umbrella header pulls in the library:
 | `tessera/mosaic.hpp` | `mosaic`, `of`, `mapped_of`, `broadcast` |
 | `tessera/value_list.hpp` | `value_list`, `to_value_list_t` |
 | `tessera/reflect.hpp` | `type_name`, the static-reflection seam |
-| `tessera/dedup.hpp` | the deduplication backends, `dedup_backend_name` |
+| `tessera/algebra.hpp` | the two implementations of the algebra and their selection, `algebra_backend_name` |
 | `tessera/config.hpp` | feature detection and configuration macros |
 
 ---
@@ -161,28 +161,28 @@ SupportedFormats::dispatch(file.format, [&]<Format F>() { Decoder<F>::decode(fil
 
 ## Configuration macros
 
-Defined in `config.hpp`; only `TESSERA_DEDUP_BACKEND` is meant to be set by a build.
+Defined in `config.hpp`; only `TESSERA_ALGEBRA_BACKEND` is meant to be set by a build.
 
 | Macro | Meaning |
 |---|---|
 | `TESSERA_VERSION_MAJOR/MINOR/PATCH`, `TESSERA_VERSION_STRING` | library version |
-| `TESSERA_DEDUP_BACKEND` | `TESSERA_DEDUP_PORTABLE` \| `_BUILTIN` \| `_REFLECTION` \| `_FOLD`; auto-selected if unset |
-| `TESSERA_DEDUP_BACKEND_NAME` | the selected backend as a string; also `tessera::dedup_backend_name` |
+| `TESSERA_ALGEBRA_BACKEND` | `TESSERA_ALGEBRA_PORTABLE` \| `_BUILTIN` \| `_REFLECTION` \| `_FOLD`; auto-selected if unset |
+| `TESSERA_ALGEBRA_BACKEND_NAME` | the selected backend as a string; also `tessera::algebra_backend_name` |
 | `TESSERA_HAS_BUILTIN_DEDUP_PACK` | Clang 22+ `__builtin_dedup_pack` available |
 | `TESSERA_HAS_TYPE_PACK_ELEMENT` | Clang `__type_pack_element` available |
 | `TESSERA_HAS_REFLECTION` | P2996 static reflection available |
 | `TESSERA_ENABLE_REFLECTION_BACKEND` | opt in to the experimental reflection backend |
 | `TESSERA_REFLECTION_HEADER` | the reflection header that was found: `<meta>` or `<experimental/meta>` |
 
-Each implementation is also reachable directly as `tessera::detail::unique_fold_t`,
-`unique_portable_t`, `unique_builtin_t` and `unique_reflection_t` — every one that the current
-toolchain supports is compiled, whether or not it is the selected backend, so that
-`tests/dedup_backends.test.cpp` can compare them against each other.
+Both implementations are always reachable: `tessera::detail::tmpl::*` and, where the toolchain has
+reflection, `tessera::detail::refl::*`. Every one the compiler can build *is* built, whether or not
+it is selected, so that `tests/algebra_backends.test.cpp` can compare them operation by operation.
+`tessera::detail::ops` names the selected one.
 
 From CMake:
 
 ```cmake
-set(TESSERA_DEDUP_BACKEND PORTABLE)   # AUTO | PORTABLE | BUILTIN | REFLECTION | FOLD
+set(TESSERA_ALGEBRA_BACKEND PORTABLE)   # AUTO | PORTABLE | BUILTIN | REFLECTION | FOLD
 add_subdirectory(external/tessera)
 target_link_libraries(my_app PRIVATE tessera::tessera)
 ```

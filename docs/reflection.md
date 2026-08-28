@@ -5,21 +5,27 @@ more directly. That is not a reason to wait — it is a reason to build the libr
 transition is a change of *implementation*, not of interface. This document says what is already in
 place, what will change, and what becomes possible that is out of reach today.
 
-## Status today — implemented and verified
+## Status today — a full implementation, not a backend
 
-The backend is no longer a sketch. On the Bloomberg P2996 fork of Clang (trunk 2026-08-08, as
-published by Compiler Explorer) the library builds with reflection as the **active** deduplication
-backend and the whole suite passes — including the cross-backend test that asserts reflection
-produces types *identical* to the fold and to the portable hybrid:
+Reflection is no longer just a way to deduplicate a list. `detail::refl` implements **all five
+operations** of the algebra — `unique_into`, `splice_unique_into`, `concat_into`, `select_into`,
+`nth` — and selecting it (`-DTESSERA_ALGEBRA_BACKEND=REFLECTION`) makes every list operation in the
+library go through `std::meta::info` instead of through template instantiation.
+
+On the Bloomberg P2996 fork of Clang the whole suite passes with it selected, and
+`tests/algebra_backends.test.cpp` asserts operation by operation that both implementations produce
+*identical types*:
 
 ```
-tessera 1.0.0 — dedup backend: reflection(P2996)
+tessera 1.1.0 — algebra: reflection (P2996)
 …
 24 tests, 0 failed
 ```
 
-Measurements are in [benchmarks.md §1b](benchmarks.md): at 128 components the reflection backend
-costs a third less compiler memory than the template path, and about the same wall-clock time.
+Isolating the assembly step (total minus the cost of the mosaic itself, which is identical on both
+implementations): at 256 components it costs **3.41 s and 15 MiB** of compiler memory against
+**4.26 s and 569 MiB** for the template implementation — a fifth less time and about a fortieth of
+the memory. Full tables in [benchmarks.md §1b](benchmarks.md).
 
 ### Getting a toolchain
 
@@ -32,7 +38,7 @@ mkdir -p toolchain && tar -xf clang-bb-p2996-trunk-<date>.tar.xz -C toolchain --
 export TESSERA_P2996_ROOT=$PWD/toolchain
 cmake -S . -B build-reflection -G Ninja \
       -DCMAKE_TOOLCHAIN_FILE=cmake/toolchains/clang-p2996.cmake \
-      -DTESSERA_DEDUP_BACKEND=REFLECTION
+      -DTESSERA_ALGEBRA_BACKEND=REFLECTION
 cmake --build build-reflection && ctest --test-dir build-reflection --output-on-failure
 ```
 
@@ -71,53 +77,51 @@ the deduplication that used to be template instantiations is now an ordinary qua
 
 Two things make the switch a local change:
 
-1. **One deduplication interface.** Everything in the library that removes duplicates goes through
-   `detail::deduplicated_t<Ts...>` in `dedup.hpp`. The implementations sit behind it, selected by
-   `TESSERA_DEDUP_BACKEND` in `config.hpp`. Adopting reflection means finishing one of them; no
-   other header changes.
+1. **Five operations, one namespace alias.** Everything `type_list` and `mosaic` do with lists goes
+   through `unique_into`, `splice_unique_into`, `concat_into`, `select_into` and `nth`, in
+   `tessera::detail::ops`. `detail::tmpl` implements them with templates, `detail::refl` with
+   reflection, and `algebra.hpp` picks one. Neither public type mentions either implementation.
 
 2. **No compiler-specific spelling outside `config.hpp`.** The probes for reflection sit next to the
-   probes for Clang's builtins, so a toolchain that ships P2996 selects the reflection backend the
-   same way Clang 22 selects the builtin one.
+   probes for Clang's builtins, so a toolchain that ships P2996 selects the reflection
+   implementation the same way Clang 22 selects the builtin one.
 
-The backend as it stands:
+The operations take the *target template*, not just the element types, which is what lets the
+reflection implementation collapse a whole pipeline into one substitution:
 
 ```cpp
-consteval auto unique_metas(std::vector<std::meta::info> metas) -> std::vector<std::meta::info> {
+template<template<class...> class Target, class... Ls>
+consteval std::meta::info splice_unique_into_info() {
     std::vector<std::meta::info> kept;
-    for (const std::meta::info meta : metas) {
-        bool seen = false;
-        for (const std::meta::info already : kept) {
-            seen = seen || (already == meta);
+    const auto splice = [&kept](std::meta::info list) {
+        for (const std::meta::info element : std::meta::template_arguments_of(list)) {
+            push_unique(kept, element);
         }
-        if (!seen) {
-            kept.push_back(meta);
-        }
-    }
-    return kept;
+    };
+    (splice(^^Ls), ...);
+    return std::meta::substitute(^^Target, kept);
 }
 
-template<class... Ts>
-consteval std::meta::info unique_reflection_info() {
-    return std::meta::substitute(^^type_list, unique_metas({^^Ts...}));
-}
-
-template<class... Ts>
-using unique_reflection_t = [:unique_reflection_info<Ts...>():];
+template<template<class...> class Target, class... Ls>
+using splice_unique_into = [:splice_unique_into_info<Target, Ls...>():];
 ```
 
-Sixteen lines of ordinary code replace the hybrid fold and the base-class membership table — because with reflection a type list is *data*, and the compiler's
-constant evaluator is a better interpreter than the template instantiation machinery. It also lifts
-the algorithmic limits described in [design.md](design.md): a `std::vector` of `info` can be sorted
-and deduplicated with no instantiation depth at all.
+`tessera::of<A, B, C>` is exactly that call with `Target = mosaic`: splicing, deduplication and the
+mosaic itself in one step. The template implementation of the same operation is a concatenation
+plan, a hybrid deduplicator and a conversion — every stage of which leaves a class specialization
+behind for the compiler to keep.
+
+What does *not* move: a user predicate like `Predicate<T>::value` is a template, and the compiler
+instantiates it once per element either way. `filter` therefore hands the algebra a bit mask rather
+than the predicate.
 
 ## How the backend is kept honest
 
 The reflection implementation is compiled **whenever the toolchain has reflection**, not only when
-it is the selected backend. That is what lets `tests/dedup_backends.test.cpp` instantiate it next to
-the fold, the hybrid and the Clang builtin on the same input and assert that all of them produce the
-*identical type* — the property every claim in this document rests on. Selecting the backend
-(`-DTESSERA_DEDUP_BACKEND=REFLECTION`) only changes which one `detail::deduplicated_t` forwards to.
+it is selected. That is what lets `tests/algebra_backends.test.cpp` instantiate both implementations
+side by side and assert, operation by operation, that they produce the *identical type* — the
+property every claim in this document rests on. Selecting the implementation
+(`-DTESSERA_ALGEBRA_BACKEND=REFLECTION`) only changes which namespace `detail::ops` names.
 
 ## What gets better
 
@@ -141,19 +145,18 @@ the fold, the hybrid and the Clang builtin on the same input and assert that all
 * **Layout control.** Sorting elements by alignment before laying them out, without changing the
   type-keyed interface — a mosaic could pack better than the declaration order allows.
 
-## Acceptance criteria for finishing the backend
+## Acceptance criteria, and where they stand
 
-The criteria set before the work started, and where they stand:
-
-1. ✅ the full test suite passes with `TESSERA_DEDUP_BACKEND=REFLECTION` and produces types identical
-   to the portable backend — asserted by `tests/dedup_backends.test.cpp`, which compares exact types
-   rather than sizes;
-2. ✅ `benchmarks/run_compile_bench.py --backends portable,fold,reflection` runs, and the numbers are
-   in [benchmarks.md §1b](benchmarks.md);
+1. ✅ the full test suite passes with `TESSERA_ALGEBRA_BACKEND=REFLECTION` and produces types
+   identical to the template implementation — asserted operation by operation in
+   `tests/algebra_backends.test.cpp`, which compares exact types rather than sizes;
+2. ✅ `benchmarks/run_compile_bench.py --backends portable,fold,reflection` runs, and the numbers
+   are in [benchmarks.md §1b](benchmarks.md);
 3. ✅ `type_name` uses `display_string_of` where reflection is available, keeping the
    string-parsing fallback for every other toolchain;
-4. ✅ `members_of_t` is covered by `tests/reflect.test.cpp`, including the aggregate-to-mosaic path.
+4. ✅ `members_of_t` is covered by `tests/reflect.test.cpp`, including the aggregate-to-mosaic path;
+5. ✅ all five operations of the algebra are implemented, not just deduplication.
 
-What keeps the backend behind `TESSERA_ENABLE_REFLECTION_BACKEND` regardless: it is validated
+What keeps the implementation behind `TESSERA_ENABLE_REFLECTION_BACKEND` regardless: it is validated
 against one implementation of a proposal that is still moving. It is not selected automatically even
 where it compiles, and it will not be until a released toolchain ships the standard spelling.

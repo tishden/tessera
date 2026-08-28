@@ -26,9 +26,9 @@
 /// selected automatically.
 
 #define TESSERA_VERSION_MAJOR 1
-#define TESSERA_VERSION_MINOR 0
+#define TESSERA_VERSION_MINOR 1
 #define TESSERA_VERSION_PATCH 0
-#define TESSERA_VERSION_STRING "1.0.0"
+#define TESSERA_VERSION_STRING "1.1.0"
 
 // ---------------------------------------------------------------------------------------------
 // Language baseline
@@ -105,39 +105,50 @@
 #endif
 
 // ---------------------------------------------------------------------------------------------
-// Deduplication backend selection
+// Algebra implementation selection
 // ---------------------------------------------------------------------------------------------
 
-#define TESSERA_DEDUP_PORTABLE 0    ///< Hybrid fold + divide-and-conquer merge. Works everywhere.
-#define TESSERA_DEDUP_BUILTIN 1     ///< Clang `__builtin_dedup_pack`.
-#define TESSERA_DEDUP_REFLECTION 2  ///< P2996 reflection (experimental, see docs/reflection.md).
-#define TESSERA_DEDUP_FOLD 3        ///< Textbook linear fold. Kept as the benchmark reference.
+#define TESSERA_ALGEBRA_PORTABLE 0    ///< Templates: hybrid fold + divide-and-conquer. Everywhere.
+#define TESSERA_ALGEBRA_BUILTIN 1     ///< Templates plus Clang's `__builtin_dedup_pack`.
+#define TESSERA_ALGEBRA_REFLECTION 2  ///< P2996 static reflection (see docs/reflection.md).
+#define TESSERA_ALGEBRA_FOLD 3        ///< Templates with the textbook fold: the benchmark reference.
 
-/// @def TESSERA_DEDUP_BACKEND
-/// @brief Which deduplication strategy `tessera::unique_t` uses.
+// The macro was called TESSERA_DEDUP_BACKEND while deduplication was the only thing behind the
+// seam. Both spellings still work, and the values kept their names too.
+#define TESSERA_DEDUP_PORTABLE TESSERA_ALGEBRA_PORTABLE
+#define TESSERA_DEDUP_BUILTIN TESSERA_ALGEBRA_BUILTIN
+#define TESSERA_DEDUP_REFLECTION TESSERA_ALGEBRA_REFLECTION
+#define TESSERA_DEDUP_FOLD TESSERA_ALGEBRA_FOLD
+
+/// @def TESSERA_ALGEBRA_BACKEND
+/// @brief Which implementation of the list algebra the library uses.
 ///
-/// Defined automatically unless the user pins it from the build system, e.g.
-/// `-DTESSERA_DEDUP_BACKEND=TESSERA_DEDUP_PORTABLE` to benchmark the fallback on a compiler
-/// that would otherwise take the builtin path.
-#if !defined(TESSERA_DEDUP_BACKEND)
-#  if TESSERA_HAS_BUILTIN_DEDUP_PACK
-#    define TESSERA_DEDUP_BACKEND TESSERA_DEDUP_BUILTIN
-#  elif TESSERA_HAS_REFLECTION && defined(TESSERA_ENABLE_REFLECTION_BACKEND)
-#    define TESSERA_DEDUP_BACKEND TESSERA_DEDUP_REFLECTION
+/// Defined automatically unless the build system pins it, e.g.
+/// `-DTESSERA_ALGEBRA_BACKEND=TESSERA_ALGEBRA_PORTABLE` to measure the fallback on a compiler that
+/// would otherwise take a faster path.
+#if defined(TESSERA_DEDUP_BACKEND) && !defined(TESSERA_ALGEBRA_BACKEND)
+#  define TESSERA_ALGEBRA_BACKEND TESSERA_DEDUP_BACKEND
+#endif
+
+#if !defined(TESSERA_ALGEBRA_BACKEND)
+#  if TESSERA_HAS_REFLECTION && defined(TESSERA_ENABLE_REFLECTION_BACKEND)
+#    define TESSERA_ALGEBRA_BACKEND TESSERA_ALGEBRA_REFLECTION
+#  elif TESSERA_HAS_BUILTIN_DEDUP_PACK
+#    define TESSERA_ALGEBRA_BACKEND TESSERA_ALGEBRA_BUILTIN
 #  else
-#    define TESSERA_DEDUP_BACKEND TESSERA_DEDUP_PORTABLE
+#    define TESSERA_ALGEBRA_BACKEND TESSERA_ALGEBRA_PORTABLE
 #  endif
 #endif
 
 /// @brief Human-readable name of the active backend, handy in diagnostics and benchmarks.
-#if TESSERA_DEDUP_BACKEND == TESSERA_DEDUP_BUILTIN
-#  define TESSERA_DEDUP_BACKEND_NAME "builtin(__builtin_dedup_pack)"
-#elif TESSERA_DEDUP_BACKEND == TESSERA_DEDUP_REFLECTION
-#  define TESSERA_DEDUP_BACKEND_NAME "reflection(P2996)"
-#elif TESSERA_DEDUP_BACKEND == TESSERA_DEDUP_FOLD
-#  define TESSERA_DEDUP_BACKEND_NAME "portable(linear fold)"
+#if TESSERA_ALGEBRA_BACKEND == TESSERA_ALGEBRA_BUILTIN
+#  define TESSERA_ALGEBRA_BACKEND_NAME "templates + __builtin_dedup_pack"
+#elif TESSERA_ALGEBRA_BACKEND == TESSERA_ALGEBRA_REFLECTION
+#  define TESSERA_ALGEBRA_BACKEND_NAME "reflection (P2996)"
+#elif TESSERA_ALGEBRA_BACKEND == TESSERA_ALGEBRA_FOLD
+#  define TESSERA_ALGEBRA_BACKEND_NAME "templates, linear fold"
 #else
-#  define TESSERA_DEDUP_BACKEND_NAME "portable(hybrid fold + merge)"
+#  define TESSERA_ALGEBRA_BACKEND_NAME "templates, hybrid fold + merge"
 #endif
 
 #endif  // TESSERA_CONFIG_HPP
