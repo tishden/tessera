@@ -126,14 +126,6 @@ find_package(tessera REQUIRED)          # or add_subdirectory(external/tessera)
 target_link_libraries(my_app PRIVATE tessera::tessera)
 ```
 
-## Origin
-
-Tessera is the extracted and rewritten form of the compile-time assembly layer of a production
-low-latency system, where it builds the component graph of every binary — services, adapters, the
-systems that use them — before the program runs. The library keeps that functionality and replaces
-the parts that were specific to that codebase: the deduplication is no longer tied to one compiler's
-builtin, the algebra is testable on its own, and the API follows standard-library conventions.
-
 ## Contributing
 
 Contributions are accepted under the [Apache License 2.0](LICENSE) and require a

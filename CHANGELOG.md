@@ -6,8 +6,7 @@ All notable changes to this project are documented here. The format follows
 
 ## [1.0.0] — 2026-08-28
 
-First public release. Extracted from the compile-time assembly layer of a production low-latency
-system and rewritten as a standalone library.
+First public release.
 
 ### Added
 
