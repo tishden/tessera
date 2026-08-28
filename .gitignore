@@ -1,0 +1,16 @@
+# Build directories
+build/
+build-*/
+cmake-build-*/
+out/
+
+# Editors and tooling
+.cache/
+.vscode/
+.idea/
+compile_commands.json
+*.swp
+
+# Benchmark artefacts
+*.json.tmp
+*-time-trace.json

@@ -1,0 +1,23 @@
+# Copyright 2026 Denis Tishkov
+# SPDX-License-Identifier: Apache-2.0
+---
+Language: Cpp
+BasedOnStyle: Google
+Standard: c++20
+
+ColumnLimit: 120
+IndentWidth: 4
+AccessModifierOffset: -4
+ContinuationIndentWidth: 4
+SpaceAfterTemplateKeyword: false
+AlwaysBreakTemplateDeclarations: Yes
+AllowShortFunctionsOnASingleLine: Empty
+AllowShortIfStatementsOnASingleLine: false
+AllowShortLoopsOnASingleLine: false
+BreakBeforeBraces: Attach
+DerivePointerAlignment: false
+PointerAlignment: Left
+IndentPPDirectives: AfterHash
+SortIncludes: CaseSensitive
+IncludeBlocks: Preserve
+PPIndentWidth: 2

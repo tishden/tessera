@@ -1,0 +1,66 @@
+# Copyright 2026 Denis Tishkov
+# SPDX-License-Identifier: Apache-2.0
+#
+# The reflection backend cannot be built by any released toolchain, so it gets its own workflow
+# rather than a column in the CI matrix: it fetches the P2996 build of Clang that Compiler Explorer
+# publishes, and builds the library against it.
+#
+# Run it by hand (Actions → this workflow → Run workflow) or on a schedule; it is not part of the
+# checks a pull request has to pass, because the toolchain it needs is a moving target.
+
+name: reflection (experimental)
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "0 4 * * 1"   # Mondays, to notice when the fork drifts
+
+jobs:
+  reflection:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Fetch the P2996 build of Clang
+        run: |
+          curl -fL -o clang-p2996.tar.xz \
+            "https://s3.amazonaws.com/compiler-explorer/opt/clang-bb-p2996-trunk-20260808.tar.xz"
+          mkdir -p toolchain
+          tar -xf clang-p2996.tar.xz -C toolchain --strip-components=1
+          toolchain/bin/clang++ --version
+
+      - name: Detect the reflection flag this build wants
+        id: probe
+        run: |
+          CXX="$PWD/toolchain/bin/clang++"
+          echo 'int main() {}' > probe.cpp
+          for flag in "-freflection-latest" "-freflection" ""; do
+            if "$CXX" -std=c++26 $flag probe.cpp -o /dev/null 2>/dev/null; then
+              echo "flag=$flag" >> "$GITHUB_OUTPUT"
+              echo "reflection flag: '$flag'"
+              exit 0
+            fi
+          done
+          echo "no accepted reflection flag" >&2
+          exit 1
+
+      - name: Build and test with the reflection backend
+        run: |
+          cmake -S . -B build -G Ninja \
+            -DCMAKE_CXX_COMPILER="$PWD/toolchain/bin/clang++" \
+            -DCMAKE_CXX_FLAGS="${{ steps.probe.outputs.flag }} -stdlib=libc++" \
+            -DTESSERA_DEDUP_BACKEND=REFLECTION
+          cmake --build build
+          ctest --test-dir build --output-on-failure
+
+      - name: Compare the reflection backend against the template ones
+        run: |
+          # dedup_backends.test.cpp asserts that every backend the toolchain can compile produces
+          # identical types; building it with the portable backend selected exercises the same
+          # comparison from the other side.
+          cmake -S . -B build-portable -G Ninja \
+            -DCMAKE_CXX_COMPILER="$PWD/toolchain/bin/clang++" \
+            -DCMAKE_CXX_FLAGS="${{ steps.probe.outputs.flag }} -stdlib=libc++" \
+            -DTESSERA_DEDUP_BACKEND=PORTABLE
+          cmake --build build-portable
+          ./build-portable/tests/tessera_tests

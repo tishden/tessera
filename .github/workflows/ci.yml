@@ -1,0 +1,125 @@
+# Copyright 2026 Denis Tishkov
+# SPDX-License-Identifier: Apache-2.0
+
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: ${{ matrix.compiler }} / ${{ matrix.backend }}
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        compiler: [clang++-18, clang++-19, g++-14]
+        backend: [AUTO]
+        include:
+          # The deduplication backends must all produce identical types, so each one is built and
+          # tested on its own as well.
+          - compiler: clang++-19
+            backend: PORTABLE
+          - compiler: clang++-19
+            backend: FOLD
+          - compiler: g++-14
+            backend: PORTABLE
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ninja-build ${{ startsWith(matrix.compiler, 'clang') && 'clang-19 clang-18' || 'g++-14' }}
+
+      - name: Configure
+        run: >
+          cmake -S . -B build -G Ninja
+          -DCMAKE_CXX_COMPILER=${{ matrix.compiler }}
+          -DTESSERA_DEDUP_BACKEND=${{ matrix.backend }}
+
+      - name: Build
+        run: cmake --build build
+
+      - name: Test
+        run: ctest --test-dir build --output-on-failure
+
+      - name: Run the examples
+        run: |
+          ./build/examples/01_basics
+          ./build/examples/02_system_assembly
+          ./build/examples/03_runtime_dispatch
+
+  install:
+    name: install and consume as a package
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install toolchain
+        run: sudo apt-get update && sudo apt-get install -y ninja-build clang-19
+
+      - name: Install the library
+        run: |
+          cmake -S . -B build -G Ninja -DCMAKE_CXX_COMPILER=clang++-19 \
+                -DCMAKE_INSTALL_PREFIX=$PWD/staged \
+                -DTESSERA_BUILD_TESTS=OFF -DTESSERA_BUILD_EXAMPLES=OFF -DTESSERA_BUILD_BENCHMARKS=OFF
+          cmake --build build --target install
+
+      - name: Consume it from another project
+        run: |
+          mkdir -p consumer && cd consumer
+          cat > CMakeLists.txt <<'EOF'
+          cmake_minimum_required(VERSION 3.20)
+          project(consumer LANGUAGES CXX)
+          find_package(tessera REQUIRED)
+          add_executable(consumer main.cpp)
+          target_link_libraries(consumer PRIVATE tessera::tessera)
+          EOF
+          cat > main.cpp <<'EOF'
+          #include <tessera/tessera.hpp>
+          int main() {
+              tessera::of<int, double, int> m{42};
+              static_assert(decltype(m)::size == 2);
+              return m.get<int>() == 42 ? 0 : 1;
+          }
+          EOF
+          cmake -S . -B build -G Ninja -DCMAKE_CXX_COMPILER=clang++-19 -DCMAKE_PREFIX_PATH=$GITHUB_WORKSPACE/staged
+          cmake --build build
+          ./build/consumer
+
+  format:
+    name: clang-format
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install clang-format
+        run: sudo apt-get update && sudo apt-get install -y clang-format-19
+      - name: Check formatting
+        run: |
+          clang-format-19 --dry-run --Werror \
+            include/tessera/*.hpp tests/*.hpp tests/*.cpp examples/*.cpp \
+            benchmarks/runtime/*.cpp benchmarks/compile_time/*.cpp
+
+  dco:
+    name: DCO sign-off
+    runs-on: ubuntu-24.04
+    if: github.event_name == 'pull_request'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Every commit must carry a Signed-off-by line
+        run: |
+          missing=0
+          for commit in $(git rev-list ${{ github.event.pull_request.base.sha }}..HEAD); do
+            if ! git show -s --format=%B "$commit" | grep -qi '^Signed-off-by: .\+ <.\+@.\+>'; then
+              echo "missing sign-off: $(git show -s --format='%h %s' "$commit")"
+              missing=1
+            fi
+          done
+          exit $missing

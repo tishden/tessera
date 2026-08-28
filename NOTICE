@@ -1,0 +1,14 @@
+Tessera
+Copyright 2026 Denis Tishkov
+
+This product includes software developed by Denis Tishkov.
+
+Portions of this library were designed and written with the assistance of
+Claude (Anthropic), used as a pair-programming tool. All contributions are
+covered by the Developer Certificate of Origin (see DCO and CONTRIBUTING.md).
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
