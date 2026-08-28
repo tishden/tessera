@@ -111,6 +111,16 @@ static_assert(sizeof(mosaic<Empty, AlsoEmpty>) == 1, "stateless elements must no
 static_assert(std::is_trivially_copyable_v<mosaic<int, double>>);
 static_assert(std::is_empty_v<mosaic<>>);
 
+// -- what the constructor accepts ---------------------------------------------------------------------
+
+static_assert(std::is_constructible_v<mosaic<int, double>, double, int>, "arguments may come in any order");
+static_assert(std::is_constructible_v<mosaic<int, double>, int>, "a subset is enough");
+static_assert(!std::is_constructible_v<mosaic<int, double>, char>, "an argument must name an element type");
+static_assert(!std::is_constructible_v<mosaic<int, double>, int, int>,
+              "two arguments of one type would leave one of them silently unused");
+static_assert(!std::is_constructible_v<mosaic<NoDefault, int>, int>,
+              "an element with no default constructor has to be supplied");
+
 // -- reference semantics of get() ----------------------------------------------------------------------
 
 using Pack = mosaic<int, double>;

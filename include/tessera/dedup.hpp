@@ -120,12 +120,12 @@ struct unique_fold_of<type_list<Ts...>> {
 };
 
 // ---------------------------------------------------------------------------------------------
-// Backend PORTABLE — divide and conquer.
+// Backend PORTABLE — a hybrid, and the default everywhere.
 //
-// Deduplicate each half, then append the second half minus everything the first half already
-// holds. The instantiation depth is logarithmic in the list length (the linear fold below hits
-// the compiler's 1024-deep instantiation limit at a few hundred components), and the intermediate
-// lists the compiler has to keep alive add up to O(N log N) rather than O(N^2) elements.
+// Short lists go to the fold above, which is hard to beat on constant factors. Longer ones are
+// halved, each half deduplicated, and the results merged: instantiation depth stays bounded by the
+// threshold plus a logarithmic number of merges, where the plain fold — one level per element —
+// would run past the compiler's 1024-deep limit at a few hundred components.
 // ---------------------------------------------------------------------------------------------
 
 /// Membership testing through the base-class table.

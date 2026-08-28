@@ -54,7 +54,10 @@ means adding one `static_assert` there.
 ## Style
 
 * C++23, four-space indent, 120 columns; `.clang-format` in the repository root is authoritative
-  (`clang-format -i include/tessera/*.hpp`).
+  (`clang-format -i include/tessera/*.hpp`). The tree is formatted with **clang-format 22**; the
+  tool's output drifts between releases — a requires-clause wraps differently under 18 — so please
+  do not reformat whole files with a different version. CI reports formatting differences without
+  failing the build for exactly that reason.
 * Types and concepts `snake_case` as in the standard library; template parameters `PascalCase`.
 * Doxygen comments on everything public. Comments explain *why*; the code already says what.
 * No dependencies. Not on Boost, not on a test framework, not on the compiler you happen to use:

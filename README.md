@@ -104,8 +104,8 @@ checked rather than assumed.
 C++23, for explicit object parameters — Clang 18+, GCC 14+, MSVC 19.40+. Header-only: copying
 `include/tessera` into a project is a valid install.
 
-Tested here on Clang 21, Clang 22 (every backend) and GCC 15; the CI matrix additionally covers
-Clang 18, Clang 19 and GCC 14.
+Tested on Clang 21, Clang 22 (portable, fold and builtin backends), GCC 15, and the P2996 fork of
+Clang for the reflection backend; CI covers Clang 18 and GCC 14 on every backend they can build.
 
 ## Building
 

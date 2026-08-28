@@ -58,7 +58,8 @@ consteval std::size_t index_of_impl() noexcept {
 
 }  // namespace detail
 
-/// @brief An ordered, compile-time list of types. Duplicates are allowed; `unique` removes them.
+/// @brief An ordered, compile-time list of types. Duplicates are allowed; `tessera::unique_t`
+///        removes them.
 ///
 /// @code
 /// using L = tessera::type_list<int, double, int>;
@@ -90,7 +91,7 @@ struct type_list {
     template<template<class...> class Target>
     using into = Target<Ts...>;
 
-    /// @brief The same list with @p Us appended (no deduplication — see `unique`).
+    /// @brief The same list with @p Us appended (no deduplication — see `tessera::unique_t`).
     template<class... Us>
     using append = type_list<Ts..., Us...>;
 

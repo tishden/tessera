@@ -27,9 +27,6 @@ namespace tessera {
 
 namespace detail {
 
-template<class...>
-inline constexpr bool always_false = false;
-
 /// Number of occurrences of @p T in @p Ts. One variable-template instantiation per element,
 /// as opposed to the quadratic chain a list-level uniqueness check would build.
 template<class T, class... Ts>
@@ -38,8 +35,8 @@ inline constexpr std::size_t occurrences = (std::size_t{std::is_same_v<T, Ts>} +
 template<class... Ts>
 inline constexpr bool all_distinct = ((occurrences<Ts, Ts...> == 1) && ... && true);
 
-/// @brief Storage for one element. `[[no_unique_address]]` lets stateless elements — policies,
-///        tag types, empty policies — cost nothing at all.
+/// @brief Storage for one element. `[[no_unique_address]]` lets stateless elements — policies, tag
+///        types, components that only exist to be named — cost nothing at all.
 template<class T>
 struct slot {
     [[no_unique_address]] T value;
@@ -80,6 +77,10 @@ using forwarded_t =
                        std::conditional_t<std::is_const_v<std::remove_reference_t<Self>>, const Member&, Member&>,
                        std::conditional_t<std::is_const_v<std::remove_reference_t<Self>>, const Member&&, Member&&>>;
 
+/// Whether one of @p Args has the decayed type @p T.
+template<class T, class... Args>
+inline constexpr bool supplied_by = (std::is_same_v<T, std::remove_cvref_t<Args>> || ...);
+
 /// Returns the argument whose decayed type is @p T, or a value-initialized @p T if there is none.
 template<class T>
 constexpr T pick_or_default() {
@@ -105,16 +106,16 @@ constexpr decltype(auto) pick_or_default(Head&& head, Tail&&... tail) {
 /// Components components{tessera::broadcast(config)};  // every component sees the config
 /// @endcode
 ///
-/// @note The tag holds a reference, so it is meant to be passed straight into a constructor.
-///       Storing one (`auto tag = tessera::broadcast(makeConfig());`) outlives the temporary.
+/// @note The tag holds a reference, so pass it straight into a constructor. Storing one
+///       (`auto tag = tessera::broadcast(makeConfig());`) leaves a reference to a dead temporary.
 template<class T>
 struct broadcast_t {
     const T& value;
 };
 
 template<class T>
-[[nodiscard]] constexpr broadcast_t<std::remove_cvref_t<T>> broadcast(const T& value) noexcept {
-    return broadcast_t<std::remove_cvref_t<T>>{value};
+[[nodiscard]] constexpr broadcast_t<T> broadcast(const T& value) noexcept {
+    return broadcast_t<T>{value};
 }
 
 /// @brief A heterogeneous container with exactly one value per element type.
@@ -151,9 +152,15 @@ public:
 
     /// @brief Builds elements from the given values, matched by type, in any order.
     ///        Element types with no matching argument are value-initialized.
+    ///
+    /// Two arguments of the same type would leave one of them silently unused, so that is rejected
+    /// rather than resolved by position; and an element that is neither supplied nor
+    /// default-initializable makes the constructor drop out of overload resolution rather than fail
+    /// inside it, so that `std::is_constructible_v` tells the truth about this type.
     template<class... Args>
         requires(sizeof...(Args) > 0) && (sizeof...(Args) <= sizeof...(Ts)) &&
-                (contains<std::remove_cvref_t<Args>> && ...)
+                (contains<std::remove_cvref_t<Args>> && ...) && detail::all_distinct<std::remove_cvref_t<Args>...> &&
+                ((detail::supplied_by<Ts, Args...> || std::default_initializable<Ts>) && ...)
     constexpr explicit mosaic(Args&&... args)
         : detail::slot<Ts>(detail::pick_or_default<Ts>(std::forward<Args>(args)...))... {}
 

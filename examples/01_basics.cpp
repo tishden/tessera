@@ -7,6 +7,7 @@
 
 #include <cstdio>
 #include <string>
+#include <type_traits>
 
 #include <tessera/tessera.hpp>
 

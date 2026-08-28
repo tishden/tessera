@@ -13,6 +13,7 @@
 
 #include <cstdio>
 #include <string>
+#include <type_traits>
 #include <vector>
 
 #include <tessera/tessera.hpp>
