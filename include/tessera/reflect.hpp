@@ -94,25 +94,40 @@ consteval std::string_view type_name() noexcept {
 template<class Aggregate>
 consteval auto member_type_reflections() -> std::vector<std::meta::info> {
     std::vector<std::meta::info> types;
-    // P2996 gained an access-context parameter late in its review; accept both spellings rather
-    // than pin the library to one revision of one implementation.
-    if constexpr (requires {
-                      std::meta::nonstatic_data_members_of(^^Aggregate, std::meta::access_context::current());
-                  }) {
+    // P2996R10 added an access-context parameter; earlier revisions take the reflection alone.
+    // The probe tests for the *type*, not for a call: `access_context::current()` is consteval, and
+    // a consteval call inside a requires-expression is not a constant expression there, so the
+    // obvious call-shaped probe would always answer "no".
+    if constexpr (requires { typename std::meta::access_context; }) {
         for (const std::meta::info member :
              std::meta::nonstatic_data_members_of(^^Aggregate, std::meta::access_context::current())) {
             types.push_back(std::meta::type_of(member));
         }
     } else {
+// The discarded branch of an `if constexpr` is still parsed, so naming the pre-R10 overload warns
+// even on a toolchain that never takes this path. The suppression is Clang-only because Clang is
+// the only compiler that has reflection to warn about.
+#  if defined(__clang__)
+#    pragma clang diagnostic push
+#    pragma clang diagnostic ignored "-Wdeprecated-declarations"
+#  endif
         for (const std::meta::info member : std::meta::nonstatic_data_members_of(^^Aggregate)) {
             types.push_back(std::meta::type_of(member));
         }
+#  if defined(__clang__)
+#    pragma clang diagnostic pop
+#  endif
     }
     return types;
 }
 
 template<class Aggregate>
-using members_of_t = [:std::meta::substitute(^^type_list, member_type_reflections<Aggregate>()):];
+consteval std::meta::info members_of_info() {
+    return std::meta::substitute(^^type_list, member_type_reflections<Aggregate>());
+}
+
+template<class Aggregate>
+using members_of_t = [:members_of_info<Aggregate>():];
 
 #endif  // TESSERA_HAS_REFLECTION
 

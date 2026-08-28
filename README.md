@@ -86,13 +86,18 @@ one interface and four implementations, selected automatically:
 |---|---|---|
 | `PORTABLE` (default) | any C++23 compiler | a fold for short lists, divide and conquer above it, membership through a base-class table |
 | `BUILTIN` | Clang 22+ | one `__builtin_dedup_pack` expansion |
-| `REFLECTION` | P2996 (`<meta>` or `<experimental/meta>`) | filters `std::meta::info` as ordinary constexpr data — see [docs/reflection.md](docs/reflection.md) |
+| `REFLECTION` | P2996 (`<meta>` or `<experimental/meta>`) | filters `std::meta::info` as ordinary constexpr data — verified on the P2996 fork of Clang, a third less compiler memory at 128 components ([docs/reflection.md](docs/reflection.md)) |
 | `FOLD` | any C++23 compiler | the textbook linear fold, kept as the benchmark reference |
 
 Every compiler-specific spelling in the library lives behind a macro in
 [`config.hpp`](include/tessera/config.hpp) — Clang builtins are guarded by `__clang__`, and nothing
-outside that header mentions a vendor. Pin a backend with
-`-DTESSERA_DEDUP_BACKEND=PORTABLE` (CMake) when you want to measure or reproduce.
+outside that header mentions a vendor. Pin a backend with `-DTESSERA_DEDUP_BACKEND=PORTABLE` (CMake)
+when you want to measure or reproduce.
+
+Every backend the toolchain can compile is compiled, whether or not it is the one in use, so
+`tests/dedup_backends.test.cpp` can instantiate all of them on the same input and assert they
+produce the *identical type*. That is the property that makes the substitution safe, and it is
+checked rather than assumed.
 
 ## Requirements
 

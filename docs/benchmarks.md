@@ -79,6 +79,53 @@ N = 256).
   portable backend still compiles 512 components (≈20 s, 2.9 GiB) and 1024 (≈77 s, 11 GiB) — which
   is where you find out that the limit is memory, not correctness.
 
+## 1b. The reflection backend, measured
+
+The P2996 backend cannot be built by any released compiler, so it gets its own run on the reference
+implementation — the Bloomberg P2996 fork of Clang, as published by Compiler Explorer. That build is
+based on Clang 21 and has no `__builtin_dedup_pack`, so the comparison here is reflection against
+the two template implementations on one toolchain:
+
+```bash
+python3 benchmarks/run_compile_bench.py \
+        --compiler <toolchain>/bin/clang++ --std c++26 --sizes 16,32,64,128 \
+        --backends portable,fold,reflection --repeats 1 \
+        --extra "-O0 -stdlib=libc++ -freflection-latest -fconstexpr-steps=1000000000"
+```
+
+#### Compile time (seconds) — clang-p2996 trunk 2026-08-08
+
+| components | headers only | std::tuple | mosaic | assembly (portable) | assembly (fold) | assembly (reflection) |
+|---|---|---|---|---|---|---|
+|         16 |         1.34 |       0.26 |   1.39 |                1.49 |            1.47 |              **1.48** |
+|         32 |         1.33 |       0.33 |   1.47 |                1.67 |            1.69 |              **1.64** |
+|         64 |         1.33 |       0.52 |   1.82 |                2.15 |            2.22 |              **2.19** |
+|        128 |         1.34 |       0.86 |   2.66 |                3.79 |            3.77 |              **3.65** |
+
+#### Peak compiler memory (MiB)
+
+| components | headers only | std::tuple | mosaic | assembly (portable) | assembly (fold) | assembly (reflection) |
+|---|---|---|---|---|---|---|
+|         16 |          135 |        101 |    137 |                 138 |             138 |               **138** |
+|         32 |          135 |        105 |    138 |                 142 |             142 |               **139** |
+|         64 |          135 |        112 |    142 |                 172 |             172 |               **151** |
+|        128 |          135 |        146 |    174 |                 306 |             277 |               **197** |
+
+What this says, and what it does not:
+
+* **The memory claim holds.** At 128 components the reflection backend costs 197 MiB against 306 MiB
+  for the portable one — a third less, and the gap widens with N, because deduplicating a vector of
+  `std::meta::info` creates no intermediate template specializations for the compiler to retain.
+* **The time claim does not, yet.** Reflection is within a few percent of the template backends, not
+  ahead of them. Constant evaluation is doing quadratic work that the fold does too; the advantage
+  is in what is *not* retained, not in what is computed.
+* **`headers only` costs 1.34 s here** against 0.26 s for the `std::tuple` translation unit, because
+  including `<meta>` and `<vector>` from this libc++ dominates a small TU. Compare columns against
+  that baseline, not against the numbers from the Clang 22 tables above — different compiler,
+  different standard library, different machine load.
+* Clang's constant-evaluation budget has to be raised (`-fconstexpr-steps`); at the default the
+  compiler reports the splice operand as "not a constant expression" once the list gets long.
+
 ## 2. Run time and object memory
 
 `benchmarks/runtime/bench_runtime.cpp`, built at `-O2`, Intel Core i7-3820, Clang 21.1.8. Both sides

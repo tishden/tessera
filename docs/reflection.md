@@ -5,30 +5,67 @@ more directly. That is not a reason to wait — it is a reason to build the libr
 transition is a change of *implementation*, not of interface. This document says what is already in
 place, what will change, and what becomes possible that is out of reach today.
 
-## Status today
+## Status today — implemented and verified
 
-`TESSERA_HAS_REFLECTION` is 1 when the compiler defines `__cpp_impl_reflection` (the standard
-spelling) or `__cpp_reflection` (the P2996 reference implementation) *and* one of `<meta>` or
-`<experimental/meta>` is available. The header that was found is exposed as
-`TESSERA_REFLECTION_HEADER`, so no other file repeats the probe.
+The backend is no longer a sketch. On the Bloomberg P2996 fork of Clang (trunk 2026-08-08, as
+published by Compiler Explorer) the library builds with reflection as the **active** deduplication
+backend and the whole suite passes — including the cross-backend test that asserts reflection
+produces types *identical* to the fold and to the portable hybrid:
 
-No released toolchain satisfies that: Clang 22 and GCC 15 have neither the `^^` operator nor the
-header. The implementation to build against is the Bloomberg P2996 fork of Clang; the practical way
-to get a binary of it is the build that Compiler Explorer publishes:
+```
+tessera 1.0.0 — dedup backend: reflection(P2996)
+…
+24 tests, 0 failed
+```
+
+Measurements are in [benchmarks.md §1b](benchmarks.md): at 128 components the reflection backend
+costs a third less compiler memory than the template path, and about the same wall-clock time.
+
+### Getting a toolchain
+
+No released compiler qualifies: Clang 22 and GCC 15 have neither the `^^` operator nor the header.
 
 ```bash
 curl -fLO https://s3.amazonaws.com/compiler-explorer/opt/clang-bb-p2996-trunk-<date>.tar.xz
-mkdir -p toolchain && tar -xf clang-bb-p2996-trunk-<date>.tar.xz -C toolchain --strip-components=1
+mkdir -p toolchain && tar -xf clang-bb-p2996-trunk-<date>.tar.xz -C toolchain --strip-components=2
 
-cmake -S . -B build-reflection \
-      -DCMAKE_CXX_COMPILER=$PWD/toolchain/bin/clang++ \
-      -DCMAKE_CXX_FLAGS="-freflection-latest -stdlib=libc++" \
+export TESSERA_P2996_ROOT=$PWD/toolchain
+cmake -S . -B build-reflection -G Ninja \
+      -DCMAKE_TOOLCHAIN_FILE=cmake/toolchains/clang-p2996.cmake \
       -DTESSERA_DEDUP_BACKEND=REFLECTION
 cmake --build build-reflection && ctest --test-dir build-reflection --output-on-failure
 ```
 
-`.github/workflows/reflection.yml` does exactly this on demand and weekly, so that the day the
-backend stops matching the fork is the day CI says so — rather than the day someone tries it.
+The toolchain file exists because of a fourth trap, this one in the build system: no released CMake
+knows C++26 for this compiler, so it silently settles on `-std=gnu++2b`, reflection switches off, and
+the failure surfaces as a wall of errors from inside `<meta>` that reads like a library bug.
+`cmake/toolchains/clang-p2996.cmake` clears `CMAKE_CXX_STANDARD_DEFAULT` so that CMake adds no `-std`
+flag at all, and passes the standard, the reflection flag, the `libc++` selection, the
+`-fconstexpr-steps` budget and the run-time `-rpath` explicitly.
+
+`.github/workflows/reflection.yml` does the same on demand and weekly, so that the day the backend
+stops matching the fork is the day CI says so — rather than the day someone tries it.
+
+### Traps worth writing down
+
+They are worth writing down, because each one costs an afternoon to rediscover:
+
+1. **No feature-test macro.** The fork defines neither `__cpp_impl_reflection` nor
+   `__cpp_reflection`; it only answers `__has_feature(reflection)`, and only with
+   `-freflection-latest`. `config.hpp` therefore probes all three spellings.
+
+2. **A splice operand must be a constant expression, and a `consteval` call written inline is not
+   one.** `using T = [:std::meta::substitute(^^type_list, unique_metas({^^Ts...})):];` is rejected;
+   naming the result first — a `consteval` function returning `std::meta::info`, or a `constexpr`
+   variable template — is accepted.
+
+3. **Feature probes must not call `consteval` functions.** The natural probe for the P2996R10
+   access-context parameter, `requires { nonstatic_data_members_of(^^T, access_context::current()); }`,
+   is always false: a `consteval` call inside a requires-expression is not a constant expression
+   there. Probing for the *type* (`requires { typename std::meta::access_context; }`) works.
+
+Also: Clang's constant-evaluation budget (`-fconstexpr-steps`) has to be raised for long lists, since
+the deduplication that used to be template instantiations is now an ordinary quadratic loop.
 
 ## The seam
 
@@ -61,11 +98,15 @@ consteval auto unique_metas(std::vector<std::meta::info> metas) -> std::vector<s
 }
 
 template<class... Ts>
-using unique_reflection_t = [:std::meta::substitute(^^type_list, unique_metas({^^Ts...})):];
+consteval std::meta::info unique_reflection_info() {
+    return std::meta::substitute(^^type_list, unique_metas({^^Ts...}));
+}
+
+template<class... Ts>
+using unique_reflection_t = [:unique_reflection_info<Ts...>():];
 ```
 
-Twelve lines of ordinary code replace the hybrid fold, the base-class membership table and the
-index-plan concatenation — because with reflection a type list is *data*, and the compiler's
+Sixteen lines of ordinary code replace the hybrid fold and the base-class membership table — because with reflection a type list is *data*, and the compiler's
 constant evaluator is a better interpreter than the template instantiation machinery. It also lifts
 the algorithmic limits described in [design.md](design.md): a `std::vector` of `info` can be sorted
 and deduplicated with no instantiation depth at all.
@@ -102,15 +143,17 @@ the fold, the hybrid and the Clang builtin on the same input and assert that all
 
 ## Acceptance criteria for finishing the backend
 
-The reflection path is done when, on a toolchain that ships P2996:
+The criteria set before the work started, and where they stand:
 
-1. the full test suite passes with `TESSERA_DEDUP_BACKEND=REFLECTION` and produces types identical
-   to the portable backend (the suite already asserts exact types, not just sizes);
-2. `benchmarks/run_compile_bench.py --backends portable,builtin,reflection` runs, and the numbers go
-   into [benchmarks.md](benchmarks.md) next to the existing columns;
-3. `type_name` switches to `display_string_of` with the string-parsing fallback kept for older
-   toolchains;
-4. `members_of_t` gets tests of its own, and the aggregate-to-mosaic path gets an example.
+1. ✅ the full test suite passes with `TESSERA_DEDUP_BACKEND=REFLECTION` and produces types identical
+   to the portable backend — asserted by `tests/dedup_backends.test.cpp`, which compares exact types
+   rather than sizes;
+2. ✅ `benchmarks/run_compile_bench.py --backends portable,fold,reflection` runs, and the numbers are
+   in [benchmarks.md §1b](benchmarks.md);
+3. ✅ `type_name` uses `display_string_of` where reflection is available, keeping the
+   string-parsing fallback for every other toolchain;
+4. ✅ `members_of_t` is covered by `tests/reflect.test.cpp`, including the aggregate-to-mosaic path.
 
-Until all four hold, the backend stays behind `TESSERA_ENABLE_REFLECTION_BACKEND` and is documented
-as experimental.
+What keeps the backend behind `TESSERA_ENABLE_REFLECTION_BACKEND` regardless: it is validated
+against one implementation of a proposal that is still moving. It is not selected automatically even
+where it compiles, and it will not be until a released toolchain ships the standard spelling.

@@ -182,7 +182,10 @@ toolchain supports is compiled, whether or not it is the selected backend, so th
 From CMake:
 
 ```cmake
-set(TESSERA_DEDUP_BACKEND PORTABLE)   # AUTO | PORTABLE | BUILTIN | REFLECTION
+set(TESSERA_DEDUP_BACKEND PORTABLE)   # AUTO | PORTABLE | BUILTIN | REFLECTION | FOLD
 add_subdirectory(external/tessera)
 target_link_libraries(my_app PRIVATE tessera::tessera)
 ```
+
+For the reflection backend there is a toolchain file — `cmake/toolchains/clang-p2996.cmake` — that
+configures the P2996 fork of Clang correctly; see [reflection.md](reflection.md).

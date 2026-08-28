@@ -56,6 +56,14 @@
 #  define TESSERA_HAS_BUILTIN(x) 0
 #endif
 
+/// @def TESSERA_HAS_FEATURE
+/// @brief `__has_feature` shim; always 0 on compilers that do not provide the trait.
+#if defined(__has_feature)
+#  define TESSERA_HAS_FEATURE(x) __has_feature(x)
+#else
+#  define TESSERA_HAS_FEATURE(x) 0
+#endif
+
 /// @def TESSERA_HAS_BUILTIN_DEDUP_PACK
 /// @brief Clang 22+ `__builtin_dedup_pack<Ts...>` — removes duplicates from a type pack in one
 ///        step, without the O(N^2) template instantiations a library fold needs.
@@ -76,11 +84,13 @@
 /// @def TESSERA_HAS_REFLECTION
 /// @brief P2996 static reflection (`^^T`, splicers, `std::meta`).
 ///
-/// Two spellings are accepted. A conforming implementation defines `__cpp_impl_reflection` and
-/// ships `<meta>`; the reference implementation the feature was prototyped in (the P2996 fork of
-/// Clang) defines `__cpp_reflection` and ships `<experimental/meta>`. The header that was found is
-/// exposed as TESSERA_REFLECTION_HEADER so that no other file has to repeat the probe.
-#if defined(__cpp_impl_reflection) || defined(__cpp_reflection)
+/// Three spellings are accepted, because the feature is younger than its feature-test macro: a
+/// conforming implementation defines `__cpp_impl_reflection` and ships `<meta>`; some builds define
+/// `__cpp_reflection`; and the P2996 reference fork of Clang (`-freflection-latest`) defines
+/// neither — it only answers `__has_feature(reflection)` — while shipping both `<meta>` and
+/// `<experimental/meta>` in its libc++. Whichever header is found is exposed as
+/// TESSERA_REFLECTION_HEADER, so that no other file has to repeat the probe.
+#if defined(__cpp_impl_reflection) || defined(__cpp_reflection) || TESSERA_HAS_FEATURE(reflection)
 #  if __has_include(<meta>)
 #    define TESSERA_HAS_REFLECTION 1
 #    define TESSERA_REFLECTION_HEADER <meta>

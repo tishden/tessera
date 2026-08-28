@@ -209,6 +209,11 @@ using unique_builtin_t = type_list<__builtin_dedup_pack<Ts...>...>;
 //
 // Compiled whenever the compiler offers reflection — not only when this backend is selected — so
 // that dedup_backends.test.cpp can assert it produces the same types as the template path.
+//
+// The loop is quadratic in ordinary constexpr code rather than in template instantiations, which is
+// the whole point; the price is that long lists can exhaust the compiler's constant-evaluation
+// budget. Clang needs `-fconstexpr-steps` raised (a 1200-element list needs roughly 2e8) or it
+// reports the splice operand as "not a constant expression". See docs/reflection.md.
 // ---------------------------------------------------------------------------------------------
 
 #if TESSERA_HAS_REFLECTION
@@ -217,7 +222,10 @@ consteval auto unique_metas(std::vector<std::meta::info> metas) -> std::vector<s
     for (const std::meta::info meta : metas) {
         bool seen = false;
         for (const std::meta::info already : kept) {
-            seen = seen || (already == meta);
+            if (already == meta) {
+                seen = true;
+                break;
+            }
         }
         if (!seen) {
             kept.push_back(meta);
@@ -226,8 +234,16 @@ consteval auto unique_metas(std::vector<std::meta::info> metas) -> std::vector<s
     return kept;
 }
 
+/// The substitution is named rather than spliced inline: a splice operand has to be a constant
+/// expression, and a `consteval` call written directly inside `[: :]` is not one — the result has to
+/// be produced by a function (or a constexpr variable) first.
 template<class... Ts>
-using unique_reflection_t = [:std::meta::substitute(^^type_list, unique_metas({^^Ts...})):];
+consteval std::meta::info unique_reflection_info() {
+    return std::meta::substitute(^^type_list, unique_metas({^^Ts...}));
+}
+
+template<class... Ts>
+using unique_reflection_t = [:unique_reflection_info<Ts...>():];
 #endif
 
 // ---------------------------------------------------------------------------------------------

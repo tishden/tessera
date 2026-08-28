@@ -69,16 +69,16 @@ struct make_systems<std::index_sequence<Is...>> {
 };
 
 using Systems = typename make_systems<std::make_index_sequence<kComponentCount>>::type;
-using System = Systems::flat_map<dependencies_of>::into<tessera::mosaic>;
-static_assert(System::size == kComponentCount);
+using Assembled = Systems::flat_map<dependencies_of>::into<tessera::mosaic>;
+static_assert(Assembled::size == kComponentCount);
 
 #elif TESSERA_BENCH_IMPL == TESSERA_BENCH_MOSAIC || TESSERA_BENCH_IMPL == TESSERA_BENCH_TUPLE
 
 template<class Sequence>
-struct make_system;
+struct make_container;
 
 template<std::size_t... Is>
-struct make_system<std::index_sequence<Is...>> {
+struct make_container<std::index_sequence<Is...>> {
 #  if TESSERA_BENCH_IMPL == TESSERA_BENCH_MOSAIC
     using type = tessera::mosaic<Component<Is>...>;
 #  else
@@ -86,7 +86,7 @@ struct make_system<std::index_sequence<Is...>> {
 #  endif
 };
 
-using System = typename make_system<std::make_index_sequence<kComponentCount>>::type;
+using Assembled = typename make_container<std::make_index_sequence<kComponentCount>>::type;
 
 #endif
 
@@ -96,13 +96,13 @@ int main() {
 #if TESSERA_BENCH_IMPL == TESSERA_BENCH_BASELINE
     int sum = 0;
 #elif TESSERA_BENCH_IMPL == TESSERA_BENCH_TUPLE
-    System system;
+    Assembled container;
     int sum = 0;
-    std::apply([&](auto&... components) { ((sum += components.value), ...); }, system);
+    std::apply([&](auto&... components) { ((sum += components.value), ...); }, container);
 #else
-    System system;
+    Assembled container;
     int sum = 0;
-    system.for_each([&](const auto& component) { sum += component.value; });
+    container.for_each([&](const auto& component) { sum += component.value; });
 #endif
     std::printf("%d\n", sum);
     return 0;

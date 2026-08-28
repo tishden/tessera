@@ -3,17 +3,20 @@
 #
 # The reflection backend cannot be built by any released toolchain, so it gets its own workflow
 # rather than a column in the CI matrix: it fetches the P2996 build of Clang that Compiler Explorer
-# publishes, and builds the library against it.
+# publishes and builds the library against it.
 #
-# Run it by hand (Actions → this workflow → Run workflow) or on a schedule; it is not part of the
-# checks a pull request has to pass, because the toolchain it needs is a moving target.
+# It is not a check a pull request has to pass — the toolchain it needs is a moving target — but it
+# runs weekly, so that the day the backend stops matching the fork is the day CI says so.
 
 name: reflection (experimental)
 
 on:
   workflow_dispatch:
   schedule:
-    - cron: "0 4 * * 1"   # Mondays, to notice when the fork drifts
+    - cron: "0 4 * * 1"
+
+env:
+  P2996_BUILD: clang-bb-p2996-trunk-20260808
 
 jobs:
   reflection:
@@ -21,46 +24,54 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Install ninja
+        run: sudo apt-get update && sudo apt-get install -y ninja-build
+
       - name: Fetch the P2996 build of Clang
         run: |
           curl -fL -o clang-p2996.tar.xz \
-            "https://s3.amazonaws.com/compiler-explorer/opt/clang-bb-p2996-trunk-20260808.tar.xz"
+            "https://s3.amazonaws.com/compiler-explorer/opt/${P2996_BUILD}.tar.xz"
           mkdir -p toolchain
-          tar -xf clang-p2996.tar.xz -C toolchain --strip-components=1
+          # The archive is ./<build>/…, so two components come off.
+          tar -xf clang-p2996.tar.xz -C toolchain --strip-components=2
           toolchain/bin/clang++ --version
 
-      - name: Detect the reflection flag this build wants
-        id: probe
+      - name: Check that this build still speaks reflection
         run: |
-          CXX="$PWD/toolchain/bin/clang++"
-          echo 'int main() {}' > probe.cpp
-          for flag in "-freflection-latest" "-freflection" ""; do
-            if "$CXX" -std=c++26 $flag probe.cpp -o /dev/null 2>/dev/null; then
-              echo "flag=$flag" >> "$GITHUB_OUTPUT"
-              echo "reflection flag: '$flag'"
-              exit 0
-            fi
-          done
-          echo "no accepted reflection flag" >&2
-          exit 1
+          # The fork defines no feature-test macro; the only reliable probe is to compile something.
+          cat > probe.cpp <<'EOF'
+          #include <experimental/meta>
+          constexpr auto r = ^^int;
+          static_assert(sizeof(typename [:r:]) == sizeof(int));
+          int main() {}
+          EOF
+          toolchain/bin/clang++ -std=c++26 -freflection-latest -stdlib=libc++ probe.cpp -o /dev/null
 
       - name: Build and test with the reflection backend
         run: |
-          cmake -S . -B build -G Ninja \
-            -DCMAKE_CXX_COMPILER="$PWD/toolchain/bin/clang++" \
-            -DCMAKE_CXX_FLAGS="${{ steps.probe.outputs.flag }} -stdlib=libc++" \
-            -DTESSERA_DEDUP_BACKEND=REFLECTION
-          cmake --build build
-          ctest --test-dir build --output-on-failure
+          export TESSERA_P2996_ROOT=$PWD/toolchain
+          cmake -S . -B build-reflection -G Ninja \
+                -DCMAKE_TOOLCHAIN_FILE=cmake/toolchains/clang-p2996.cmake \
+                -DTESSERA_DEDUP_BACKEND=REFLECTION
+          cmake --build build-reflection
+          ctest --test-dir build-reflection --output-on-failure
+          ./build-reflection/tests/tessera_tests | head -1   # must report the reflection backend
 
-      - name: Compare the reflection backend against the template ones
+      - name: Compare the backends on the same toolchain
         run: |
-          # dedup_backends.test.cpp asserts that every backend the toolchain can compile produces
-          # identical types; building it with the portable backend selected exercises the same
-          # comparison from the other side.
+          # dedup_backends.test.cpp instantiates every implementation the compiler can compile and
+          # asserts they produce identical types; building with the portable backend selected runs
+          # the same comparison from the other side.
+          export TESSERA_P2996_ROOT=$PWD/toolchain
           cmake -S . -B build-portable -G Ninja \
-            -DCMAKE_CXX_COMPILER="$PWD/toolchain/bin/clang++" \
-            -DCMAKE_CXX_FLAGS="${{ steps.probe.outputs.flag }} -stdlib=libc++" \
-            -DTESSERA_DEDUP_BACKEND=PORTABLE
+                -DCMAKE_TOOLCHAIN_FILE=cmake/toolchains/clang-p2996.cmake \
+                -DTESSERA_DEDUP_BACKEND=PORTABLE
           cmake --build build-portable
-          ./build-portable/tests/tessera_tests
+          ctest --test-dir build-portable --output-on-failure
+
+      - name: Compile-time benchmark, reflection against the template backends
+        run: |
+          python3 benchmarks/run_compile_bench.py \
+                  --compiler "$PWD/toolchain/bin/clang++" --std c++26 \
+                  --sizes 16,32,64,128 --backends portable,fold,reflection --repeats 1 \
+                  --extra "-O0 -stdlib=libc++ -freflection-latest -fconstexpr-steps=1000000000"
