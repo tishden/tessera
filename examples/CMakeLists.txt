@@ -4,7 +4,8 @@
 set(TESSERA_EXAMPLES
         01_basics
         02_system_assembly
-        03_runtime_dispatch)
+        03_runtime_dispatch
+        04_dependency_resolution)
 
 foreach(example IN LISTS TESSERA_EXAMPLES)
     add_executable(tessera_example_${example} ${example}.cpp)

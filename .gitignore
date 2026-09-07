@@ -14,3 +14,7 @@ compile_commands.json
 # Benchmark artefacts
 *.json.tmp
 *-time-trace.json
+
+# Downloaded P2996 toolchain and its tarball (see docs/reflection.md)
+toolchain/
+.p2996-download/

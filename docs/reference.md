@@ -120,6 +120,57 @@ engine.for_each([](auto& service) { service.reset(); });
 
 ---
 
+## `tessera/graph.hpp`
+
+`of<...>` flattens a list that is already complete. `resolve<...>` follows each type's declared
+dependencies transitively and orders the result so that every element is preceded by the elements it
+depends on — the two properties a dependency-injection container is asked for.
+
+| Entity | Meaning |
+|---|---|
+| `dependencies_of<T>` | customization point: `::type` is a `type_list` of `T`'s **direct** dependencies. Defaults to `T::dependencies` when that member exists, otherwise to `type_list<>` |
+| `dependencies_of_t<T>` | `typename dependencies_of<T>::type` |
+| `resolved_t<Roots...>` | the transitive closure of `Roots` as a `type_list`, dependencies before dependents; the roots are included |
+| `resolve<Roots...>` | the same closure as a `mosaic` |
+| `has_dependency_cycle<Roots...>` | `constexpr bool` — whether the reachable graph has a cycle |
+| `is_topologically_sorted<L>` | `constexpr bool` — whether every element of `L` is preceded by everything it depends on, and `L` is closed under `dependencies_of`. Accepts a `type_list` or a `mosaic` |
+
+```cpp
+struct Config {};
+struct Pool   { using dependencies = tessera::type_list<Config>; };
+struct Router { using dependencies = tessera::type_list<Pool, Config>; };
+
+using Services = tessera::resolve<Router>;                       // one root is enough
+static_assert(std::same_as<Services, tessera::mosaic<Config, Pool, Router>>);
+static_assert(tessera::is_topologically_sorted<Services>);
+
+Services services;
+services.for_each([](auto& s) { s.start(); });                   // never before its dependencies
+```
+
+Teaching the traversal about a type you do not own:
+
+```cpp
+template<> struct tessera::dependencies_of<ThirdPartyThing> {
+    using type = tessera::type_list<Config>;
+};
+```
+
+**Order.** Depth-first, emitting each node after its dependencies, roots in the order given. The
+result is a function of the declarations alone — the same graph produces the same order regardless
+of include order or which root was named first — so it can be pinned with `static_assert`.
+
+**Cycles.** `resolve` and `resolved_t` reject a cyclic graph with a `static_assert`.
+`has_dependency_cycle` answers the same question as a `bool` for code that would rather test than
+fail. A node reached twice by different paths is not a cycle; only a back edge to a node still on
+the current path is.
+
+**Cost.** The traversal is bounded by instantiation depth in the *longest dependency chain*, not in
+the number of services, and its price relative to `of<...>` is measured in
+[benchmarks.md §1d](benchmarks.md).
+
+---
+
 ## `tessera::value_list<T, Vs...>`
 
 A list of constants of one type.

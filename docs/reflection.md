@@ -132,6 +132,7 @@ property every claim in this document rests on. Selecting the implementation
 | `type_name<T>()` | parsing `__PRETTY_FUNCTION__` / `__FUNCSIG__` | `std::meta::display_string_of` |
 | Diagnostics | a mangled type in a `static_assert` message | the actual names, formatted |
 | Ordering | no way to sort types | sort by name, size, alignment — a canonical element order becomes possible |
+| Dependency resolution (`graph.hpp`) | a depth-first walk over `type_list`, identical on every implementation | unchanged — the walk is built from `contains`/`append`, not from the five operations, so there is nothing for reflection to take over |
 
 ## What becomes newly possible
 

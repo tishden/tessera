@@ -12,6 +12,9 @@ python3 benchmarks/run_compile_bench.py --compiler clang++ \
 cmake --build build --target tessera_bench_runtime && ./build/benchmarks/bench_runtime
 ```
 
+Section 1 measures the range the library is for; [section 1c](#1c-scaling-where-each-implementation-stops)
+pushes both implementations of the algebra until they stop, and says what stops them.
+
 ## 1. Compile time and compiler memory
 
 ### Method
@@ -144,6 +147,232 @@ That is the shape of the result, and it is worth being precise about what it mea
   different standard library.
 * Clang's constant-evaluation budget has to be raised (`-fconstexpr-steps`); at the default the
   compiler reports the splice operand as "not a constant expression" once the list gets long.
+
+## 1c. Scaling: where each implementation stops
+
+Sections 1 and 1b measure the range the library is designed for — components in the tens to low
+hundreds. This section asks the opposite question: pushed as far as the toolchain allows, what
+actually stops each implementation of the algebra, and at what size?
+
+### Method
+
+The realistic `assembly` workload is bounded by the container, not by the algebra: a mosaic of N
+elements is N base classes and N accessor instantiations, and that dominates long before
+deduplication does. Two implementations of the translation unit isolate the algebra instead:
+
+| Implementation | What it compiles |
+|---|---|
+| `setup` | N component types and the 4N mentions of them collected into a `type_list`, **without deduplication** |
+| `algebra` | the same 4N mentions, deduplicated into a `type_list` — `unique_into` and nothing else |
+
+`algebra` minus `setup` is therefore the cost of deduplication alone, with the cost of instantiating
+the types themselves subtracted out. Nothing is constructed, no container is built, and no object
+exists at run time.
+
+```bash
+python3 benchmarks/run_compile_bench.py --compiler <p2996>/bin/clang++ --std c++26 \
+        --only setup,algebra --sizes 250,500,1000,2000,4000,8000,16383 \
+        --backends portable,reflection --repeats 1 \
+        --timeout 1800 --memory-cap 10000 --stack -1 \
+        --extra="-O0 -stdlib=libc++ -freflection-latest -fconstexpr-steps=4000000000 \
+                 -fbracket-depth=131072"
+```
+
+### Results
+
+clang-p2996 trunk 2026-09-03 (Clang 21 base), `-std=c++26 -O0`, one run per cell. **Totals**, with
+the `setup` column being the floor every other column includes:
+
+#### Compile time (seconds)
+
+| N | type mentions | setup | templates (portable) | reflection (linear scan) | reflection (hashed) |
+|---|---|---|---|---|---|
+|   250 |  1 000 | 1.45 |    5.36 |    3.01 |    9.42 |
+|   500 |  2 000 | 1.45 |   14.43 |    8.02 |   17.43 |
+| 1 000 |  4 000 | 1.55 |   45.24 |   28.50 |   33.06 |
+| 2 000 |  8 000 | 1.80 | *stopped at 21 GiB* |  110.40 |   68.37 |
+| 4 000 | 16 000 | 2.25 | — |  437.03 |  137.55 |
+| 8 000 | 32 000 | 3.26 | — | 1773.04 |  277.51 |
+|16 383 | 65 532 | 5.46 | — | *≈7 400, extrapolated* |  584.64 |
+
+#### Peak compiler memory (MiB)
+
+| N | type mentions | setup | templates (portable) | reflection (linear scan) | reflection (hashed) |
+|---|---|---|---|---|---|
+|   250 |  1 000 | 127 |  621 | 126 |  168 |
+|   500 |  2 000 | 131 | 2123 | 129 |  212 |
+| 1 000 |  4 000 | 139 | 7996 | 137 |  300 |
+| 2 000 |  8 000 | 156 | *stopped at 21 504* | 150 |  479 |
+| 4 000 | 16 000 | 191 | — | 179 |  836 |
+| 8 000 | 32 000 | 261 | — | 240 | 1556 |
+|16 383 | 65 532 | 418 | — | — | 3071 |
+
+The template column stops at N = 1 000 on purpose. At N = 2 000 the compiler passed 21 GiB without
+finishing and was killed rather than driven into the machine's limits; the growth below is clean
+enough to say what would have happened without watching it happen.
+
+#### The cost of deduplication alone (`algebra` minus `setup`)
+
+| N | mentions | templates | | reflection, scan | | reflection, hashed | |
+|---|---|---|---|---|---|---|---|
+| | | time | memory | time | memory | time | memory |
+|   250 |  1 000 |   3.91 s |  494 MiB |    1.56 s | −1 MiB |   7.97 s |   41 MiB |
+|   500 |  2 000 |  12.98 s | 1992 MiB |    6.57 s | −2 MiB |  15.98 s |   81 MiB |
+| 1 000 |  4 000 |  43.69 s | 7857 MiB |   26.95 s | −2 MiB |  31.51 s |  161 MiB |
+| 2 000 |  8 000 | — | — |  108.60 s | −6 MiB |  66.57 s |  323 MiB |
+| 4 000 | 16 000 | — | — |  434.78 s | −12 MiB | 135.30 s |  645 MiB |
+| 8 000 | 32 000 | — | — | 1769.78 s | −21 MiB | 274.25 s | 1295 MiB |
+|16 383 | 65 532 | — | — | — | — | 579.18 s | 2653 MiB |
+
+### Reading the numbers
+
+* **Deduplicating with reflection costs the compiler no memory at all.** Not "less" — none that can
+  be measured. The peak of the `algebra` translation unit is the peak of the `setup` translation
+  unit, to within ±21 MiB across a 32× range, and the sign of the difference is as often negative as
+  positive. The template implementation over the same range goes 494 → 1992 → 7857 MiB, ×3.94 to
+  ×4.03 per doubling: exactly quadratic, exactly as many retained class specializations as the
+  algorithm creates.
+* **Both are quadratic in time, and reflection is quadratic with a smaller constant.** The scan path
+  goes ×4.21, ×4.10, ×4.03, ×4.00, ×4.07 per doubling — textbook. It is doing the same membership
+  test the template implementation does; it just is not materialising a type for each intermediate
+  result. This is the same conclusion §1b reaches at 128 and 256 components, holding four doublings
+  further out.
+* **Membership is the whole cost, and with reflection it is ordinary code.** Replacing the linear
+  scan with an open-addressed table keyed on a hash of `display_string_of` makes deduplication
+  exactly linear — 8.0 to 8.8 ms and 41.3 to 41.5 KiB per type mention, steady from 1 000 mentions
+  to 65 532. At the ceiling that is 579 s against roughly 7 400 s extrapolated for the scan.
+  Verified to produce types identical to the template implementation past the threshold where the
+  branch is taken.
+* **But it is not the right default, and the numbers say why.** Hashing costs about 660 comparisons'
+  worth of interpreter time per element, so it only overtakes the scan past ~5 000 mentions
+  (N ≈ 1 300) — an order of magnitude beyond the range this library is for — and it pays for the
+  speed in exactly the resource reflection was winning on: 2 653 MiB at the ceiling, against zero.
+  `detail::refl` therefore keeps the linear scan. The measurement is here because the *possibility*
+  is the point: on the template side the cost is the compiler creating types and cannot be
+  programmed around, while on the reflection side the algorithm is ordinary code and can simply be
+  replaced when a workload justifies it.
+
+### The four walls, in the order you hit them
+
+Every one of these was hit while producing the table above, and three of the four are raised by a
+compiler default rather than by anything the library does.
+
+1. **A fold expression over ~2 048 arguments** — `error: instantiating fold expression with 4000
+   arguments exceeded expression nesting limit of 2048`. Both implementations expand a pack with a
+   fold, so both stop at N = 512 until `-fbracket-depth` is raised. Nothing about the algebra
+   changes; the flag does.
+2. **The compiler's stack, at roughly 12 000 mentions** — `clang` dies of `SIGSEGV` after four
+   seconds and 165 MiB, printing nothing at all. It is the parser recursing over the fold, and
+   `ulimit -s unlimited` (the benchmark's `--stack -1`) removes it. A crash with no diagnostic is
+   easy to misread as a library bug, which is why the benchmark classifies it as `crash` rather than
+   `failed`.
+3. **Compiler memory, for the template implementation, at ~4 000 mentions.** 7.9 GiB, growing ×4 per
+   doubling. This one is real, is the library's own, and is the reason the reflection path exists.
+4. **65 535 type mentions, on Clang, absolutely.** Past that the front end cannot represent the list
+   — see below. Reflection does not help: the input arrives as a template argument pack either way.
+
+### A hard ceiling worth knowing about: `sizeof...` overflows silently
+
+Past a certain pack size Clang returns a **wrong number** from `sizeof...`, with no diagnostic. Pack
+*expansion* stays correct; only the count is wrong. Measured on Clang 21.1.8 and on the P2996 fork:
+
+| pack size | `sizeof...` over a type pack | `sizeof...` over a non-type pack |
+|---|---|---|
+| 32 767 | 32 767 | 32 767 |
+| 32 768 | 32 768 | **0** |
+| 65 535 | 65 535 | **32 767** |
+| 65 536 | **0** | **0** |
+| 100 000 | **34 464** | **1 696** |
+
+The counts wrap modulo 65 536 for type packs and modulo 32 768 for non-type packs. GCC 11.5 computes
+every one of these correctly, so this is Clang's ceiling and not the language's. It is
+[LLVM #119600](https://github.com/llvm/llvm-project/issues/119600), open since December 2024 and
+labelled a miscompilation and a regression since Clang 16; the thresholds above are not in the
+report.
+
+For Tessera this means a list of at most **65 535 type mentions** per operation on Clang — N ≤ 16 383
+at four dependencies per component — and it means N = 100 000 and N = 1 000 000 are not measurable
+at all rather than merely expensive. The `static_assert` on the list length in
+`benchmarks/compile_time/bench_tu.cpp` is the only thing that catches the truncation; without it the
+benchmark would silently measure a list of 6 784 elements and report it as 400 000. Any code that
+computes with very large packs wants the same guard.
+
+## 1d. What following the graph costs
+
+`of<...>` flattens a list that is already complete; `resolve<...>` follows each type's declared
+dependencies transitively and topologically sorts the result. The second does strictly more, so the
+question is what the extra properties cost.
+
+### Method
+
+Two workloads of the same size, both ending in a list of N distinct types:
+
+| Implementation | What it compiles |
+|---|---|
+| `assembly` | N systems declaring four overlapping dependencies each — 4N mentions flat-mapped and deduplicated into a mosaic. No edges are followed |
+| `resolve` | N services in a DAG, service `I` depending on `I/2`, `I/3` and `I/5` — 3N edges, depth `log N`, most nodes reachable by several paths. Resolved transitively and topologically sorted |
+
+The `resolve` translation unit also asserts `is_topologically_sorted` on the result, so the ordering
+property is established by the same compilation that is being timed.
+
+```bash
+python3 benchmarks/run_compile_bench.py --compiler clang++ \
+        --only "headers only,mosaic,assembly,resolve" --sizes 16,32,64,128,256 \
+        --backends portable --repeats 3
+```
+
+### Results
+
+Clang 21.1.8, `-std=c++23 -O0`, best of three. **Totals**; `mosaic` is the floor both of the last two
+columns include, since both end by building a mosaic of N elements.
+
+| N | headers only | mosaic | assembly | resolve |
+|---|---|---|---|---|
+|  16 | 0.25 s / 94 MiB | 0.30 s /  97 MiB | 0.35 s / 101 MiB | 0.30 s /  98 MiB |
+|  32 | 0.25 s / 94 MiB | 0.35 s /  98 MiB | 0.50 s / 107 MiB | 0.40 s / 103 MiB |
+|  64 | 0.25 s / 94 MiB | 0.50 s / 106 MiB | 0.85 s / 134 MiB | 0.60 s / 116 MiB |
+| 128 | 0.25 s / 94 MiB | 1.05 s / 132 MiB | 2.05 s / 268 MiB | 1.35 s / 168 MiB |
+| 256 | 0.25 s / 94 MiB | 3.06 s / 233 MiB | 6.01 s / 791 MiB | 4.16 s / 375 MiB |
+
+Net of the mosaic, i.e. the assembly step alone:
+
+| N | assembly | | resolve | |
+|---|---|---|---|---|
+| | time | memory | time | memory |
+|  64 | 0.35 s |  28 MiB | 0.10 s |  10 MiB |
+| 128 | 1.00 s | 136 MiB | 0.30 s |  36 MiB |
+| 256 | 2.95 s | 558 MiB | 1.10 s | 142 MiB |
+
+### Reading the numbers
+
+* **Following the graph is cheaper than flattening a flat list**, by 2.7× in time and 3.9× in memory
+  at 256 services — which is not the result one expects from the operation that does more.
+* **The reason is what each one asks the compiler to build.** Deduplication rebuilds the list: every
+  intermediate is a class specialization the compiler creates, names and keeps, and there are
+  O(4N) of them. The traversal asks a different question — `type_list::contains` is a fold
+  expression over a list that already exists, so a membership test creates no list at all. Only the
+  `append` at each emitted node builds one, and there are N of those rather than 4N.
+* **Both are still superlinear**, and for the same reason as everything else in this document: the
+  appends grow. Doubling N roughly triples the resolution cost, which is the same shape as the rest
+  of the library and puts the practical range in the same place — services in the tens to low
+  hundreds per translation unit.
+* **Depth is bounded by the longest chain, not by the count.** The benchmark graph is `log N` deep,
+  so 256 services cost eight levels of recursion. A chain of 256 services would cost 256, and that is
+  the number to watch against the compiler's instantiation limit — not the size of the graph.
+
+### The header costs nothing to those who do not use it
+
+`graph.hpp` is included by the umbrella header, so it is worth checking that adding it did not tax
+every translation unit that never resolves anything. Measured with and without it on the same
+compiler (`--include` points the benchmark at a second copy of the headers):
+
+| | headers only | mosaic (256) | assembly (256) |
+|---|---|---|---|
+| without `graph.hpp` | 0.30 s / 94 MiB | 2.91 s / 233 MiB | 6.16 s / 791 MiB |
+| with `graph.hpp`    | 0.25 s / 94 MiB | 3.01 s / 233 MiB | 6.11 s / 792 MiB |
+
+Identical within run-to-run noise: the traversal is templates that nothing instantiates until
+`resolve` is named.
 
 ## 2. Run time and object memory
 

@@ -154,7 +154,75 @@ Note what does *not* move: a predicate like `Predicate<T>::value` is the user's 
 compiler instantiates it once per element either way. Only the list surgery changes hands, which is
 why `filter` passes a bit mask into the algebra rather than the predicate itself.
 
-## 5. Keeping vendor extensions contained
+## 5. Following the graph
+
+`of<...>` answers "put these together". It flattens nested lists, drops duplicates, and follows
+nothing: the caller has to have named every element. For a set of leaves — policies, tags, formats —
+that is the right amount of work.
+
+Dependency injection asks for something else. A `Router` needs a `ConnectionPool`, which needs a
+`Config`, and whoever asks for a router should not have to know the second half of that sentence.
+`resolve<...>` (in `graph.hpp`) walks the graph instead, and establishes two properties `of<...>`
+does not:
+
+* the result is **closed** — everything reachable from the roots is present, once, however many
+  paths lead to it;
+* the result is **topologically ordered** — every element's dependencies sit at lower indices.
+
+The second property is the one that makes the container useful rather than merely correct. A mosaic
+is walked with `for_each` in element order, so if that order is topological, walking it front to back
+is a valid start-up sequence and walking it backwards is a valid shutdown sequence — without anyone
+writing either sequence down, and without a runtime graph to consult.
+
+### The traversal
+
+Depth-first, emitting each node *after* its dependencies:
+
+```
+walk(T):
+    if T already emitted:  nothing to do
+    if T is on the current path:  cycle
+    for each direct dependency D of T: walk(D)
+    emit T
+```
+
+Three states, three class template specializations. That split is not stylistic: a member alias is
+instantiated together with its class (§3), so a single class computing all three answers would
+descend into the graph even at a node it had already finished with — and, at a node that closes a
+cycle, would not terminate. Splitting on a `walk_kind` enum means the recursing branch only exists
+in the specialization that should recurse.
+
+Two consequences worth stating:
+
+* **Instantiation depth is bounded by the longest dependency chain**, not by the number of services.
+  A hundred services in a shallow graph cost far less depth than ten in a chain.
+* **The order is a function of the declarations alone.** Nothing consults include order, file order,
+  or the order the roots happened to be written in beyond using it as the DFS start order — so the
+  resulting type is stable and can be pinned with `static_assert`, which is what
+  `tests/graph.test.cpp` does.
+
+### Cycles
+
+A back edge is recorded in the walk state rather than asserted at the point it is found: asserting
+inside the recursion would fire from somewhere in the middle of the graph, with the instantiation
+still unwinding. The flag is carried out to the top, where `resolve` turns it into one
+`static_assert`. `has_dependency_cycle<Roots...>` exposes the same flag as a `bool`, so a test can
+check that a cyclic graph *is* rejected without failing to compile.
+
+The distinction that matters here is between a node reached twice and a node reached again while it
+is still being processed. Only the second is a cycle; a diamond is not. That is why the walk carries
+a path as well as a set of emitted nodes.
+
+### What it is built from
+
+`resolve` uses no new primitive. It is written in terms of `type_list::contains`,
+`type_list::append` and `elements_of_t`, so it is the same code on every algebra implementation and
+inherits their equivalence rather than needing its own. That is deliberate: the five operations in
+`detail::ops` are the seam that has two implementations, and widening that seam for a graph walk
+would mean two traversals to keep in step. The cost is that reflection makes this operation no
+cheaper — it is one place where the two implementations genuinely have nothing to choose between.
+
+## 6. Keeping vendor extensions contained
 
 Two Clang builtins are used when available — `__builtin_dedup_pack` and `__type_pack_element` — and
 both are detected in `config.hpp` behind `defined(__clang__) && __has_builtin(...)`, exposed as
@@ -162,7 +230,7 @@ both are detected in `config.hpp` behind `defined(__clang__) && __has_builtin(..
 hybrid deduplication above, and pack indexing through a tagged-base indexer that resolves an index
 to a type by overload resolution rather than by walking the pack.
 
-## 6. What it costs the compiler
+## 7. What it costs the compiler
 
 Numbers are in [benchmarks.md](benchmarks.md); the shape of them is:
 
@@ -174,7 +242,7 @@ Numbers are in [benchmarks.md](benchmarks.md); the shape of them is:
   per translation unit — which is the range this design is for. Beyond that the answer is not a
   faster metafunction, it is fewer types per translation unit.
 
-## 7. Deliberately left out
+## 8. Deliberately left out
 
 * **Index-based access as the primary API.** `nth<I>` exists for the algebra; the container is
   addressed by type on purpose.

@@ -4,6 +4,58 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); the project follows
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added — dependency resolution
+
+* **`tessera::resolve<Roots...>` / `resolved_t<Roots...>`** (`tessera/graph.hpp`): the transitive
+  closure of a dependency graph, **topologically sorted** so that every element is preceded by
+  everything it depends on. `of<...>` flattens a list that is already complete; `resolve` works the
+  list out from what each type declares, which is what dependency injection actually asks for.
+  Walking the resulting mosaic front to back is a valid start-up order, backwards a valid shutdown
+  order, and neither exists as data in the binary.
+* **`tessera::dependencies_of<T>`** — the customization point. Defaults to `T::dependencies` when
+  that member exists and to `type_list<>` otherwise, so leaves need no opt-in and a third-party type
+  is taught by specializing it. A dependency entry may itself be a list, spliced by `elements_of`.
+* **`tessera::has_dependency_cycle<Roots...>`** — a cycle makes `resolve` a compile error; this
+  reports it as a `bool` instead, so a test can check that a cyclic graph is rejected without
+  failing to compile. A node reached by several paths is not a cycle; only a back edge to a node
+  still on the current path is.
+* **`tessera::is_topologically_sorted<L>`** — the ordering property, stated directly, over a
+  `type_list` or a `mosaic`. It also verifies closure: a dependency that is absent answers `npos`,
+  which is not less than anything.
+* `examples/04_dependency_resolution.cpp` and `tests/graph.test.cpp`, the latter pinning exact
+  resolved types (so the suite passing under both algebra implementations is itself the proof that
+  they agree here) and asserting the ordering property on a generated 64-node DAG.
+* [docs/benchmarks.md §1d](docs/benchmarks.md): resolution costs **1.10 s and 142 MiB at 256
+  services against 2.95 s and 558 MiB** for the deduplicating assembly of the same size — following
+  the graph is cheaper than flattening a flat list, because a membership test over an existing list
+  creates no types while deduplication rebuilds the list. `graph.hpp` costs nothing to a translation
+  unit that never names `resolve`, measured with and without it.
+
+### Added — benchmarking
+
+* **A scaling benchmark for the algebra itself.** `bench_tu.cpp` gained two implementations:
+  `algebra` (deduplication with no container built on top) and `setup` (the same input with no
+  deduplication at all), so that `algebra` minus `setup` is the cost of deduplication with the cost
+  of instantiating the types subtracted out. This is what makes the two algebra implementations
+  comparable past the point where a container of N elements stops compiling.
+* `run_compile_bench.py` gained `--only`, `--timeout`, `--memory-cap` (`RLIMIT_AS` in the child),
+  `--stack` (`RLIMIT_STACK`; needed past ~12 000 type mentions, where the compiler segfaults parsing
+  the fold) and `--include` (for A/B-ing two implementations of a header). Failures are now
+  classified — `depth`, `nesting`, `steps`, `oom`, `crash`, `truncated`, `timeout` — and the first
+  `error:` line is reported, because *how* a configuration fails to compile is the result.
+* [docs/benchmarks.md §1c](docs/benchmarks.md) — deduplication measured over a 32× range on the
+  P2996 fork. Deduplicating with reflection costs the compiler no measurable memory (±21 MiB against
+  a translation unit that does not deduplicate at all) while the template implementation grows ×4
+  per doubling and passes 21 GiB at 8 000 mentions; both are quadratic in time. Also the four walls
+  that stop the measurement, three of which are compiler defaults, and what changes if the linear
+  membership scan is replaced with a hash table.
+* Documented a hard Clang ceiling: past 65 535 type mentions `sizeof...` silently returns a wrong
+  number ([LLVM #119600](https://github.com/llvm/llvm-project/issues/119600)); GCC computes it
+  correctly. The `static_assert` on list length in the benchmark is what catches it.
+* A `resolve` benchmark implementation (N services in a DAG) alongside `algebra` and `setup`.
+
 ## [1.1.0] — 2026-08-28
 
 The seam between the public types and their implementation widened from one operation to five, and

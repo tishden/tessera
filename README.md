@@ -57,6 +57,7 @@ you would have written by hand.
 | `tessera::type_list<Ts...>` | a list of types and the algebra over it: `filter`, `transform`, `flat_map`, `concat`, `unique_t`, `flatten_t`, `nth`, `index_of` |
 | `tessera::mosaic<Ts...>` | the storage: one value per type, `get<T>()`, `set`, `emplace`, `for_each`, `for_each_type`, `apply`, plus the same algebra lifted to mosaics |
 | `tessera::value_list<T, Vs...>` | a list of constants, and `dispatch(runtimeValue, handler)` — the way back from a runtime value to a compile-time one |
+| `tessera::resolve<Roots...>` | the transitive closure of a dependency graph, topologically sorted (`tessera/graph.hpp`) |
 
 Configuration and introspection:
 
@@ -85,6 +86,46 @@ SupportedFormats::dispatch(file.format, [&]<Format F>() {
 Measured at **2.04 ns** per dispatch against **5.51 ns** for an `unordered_map` of function
 pointers, and system iteration at **0.50 ns** per call against **5.25 ns** through a vector of
 virtual interfaces (see [docs/benchmarks.md](docs/benchmarks.md) for the full setup).
+
+## Dependencies, resolved and ordered
+
+`of<...>` puts together a list you have already written out. `resolve<...>` works out the list:
+each service declares only its **direct** dependencies, and the closure — plus the order to start it
+in — is computed while the program is being compiled.
+
+```cpp
+struct Config         {};
+struct Log            {};
+struct ConnectionPool { using dependencies = tessera::type_list<Config, Log>; };
+struct UserRepository { using dependencies = tessera::type_list<ConnectionPool>; };
+struct HttpRouter     { using dependencies = tessera::type_list<UserRepository, Log>; };
+
+using Services = tessera::resolve<HttpRouter>;   // one root; the rest arrives on its own
+
+static_assert(std::same_as<Services,
+    tessera::mosaic<Config, Log, ConnectionPool, UserRepository, HttpRouter>>);
+
+Services services;
+services.for_each([](auto& service) { service.start(); });
+```
+
+Two properties, both `static_assert`-able and both checked in `tests/graph.test.cpp`:
+
+* **closed** — everything reachable from the roots is there, exactly once however many paths lead
+  to it (`Log` is named twice above and exists once);
+* **topologically sorted** — every element is preceded by what it depends on, so walking the
+  container front to back is a valid start-up order and backwards is a valid shutdown order.
+  `tessera::is_topologically_sorted<Services>` states the property directly.
+
+A cycle is a compile error, and `tessera::has_dependency_cycle<Roots...>` answers the same question
+as a `bool` for code that would rather ask. `tessera::dependencies_of` is the customization point for
+types you cannot add a member to. The order comes out of the declarations alone — not include order,
+not root order beyond where the walk starts — so it is stable enough to assert on.
+
+Following the graph costs **less** than flattening a flat list of the same size: 1.10 s and 142 MiB
+of compiler memory at 256 services, against 2.95 s and 558 MiB for the deduplicating assembly, since
+a membership test over an existing list creates no types while deduplication rebuilds the list
+([docs/benchmarks.md §1d](docs/benchmarks.md)).
 
 ## Two implementations of the same algebra
 
@@ -170,7 +211,30 @@ compiler retains — a class specialization for every intermediate list. Time fa
 not by a factor: constant evaluation does the same quadratic membership work, just without
 materializing types. Reflection is a cheaper representation here, not a better algorithm.
 
-Method, full tables and caveats: [docs/benchmarks.md](docs/benchmarks.md).
+**Pushed to the limit.** Deduplication measured on its own — the same list with and without the
+operation, so the cost of instantiating the types is subtracted out — over a 32× range:
+
+| type mentions | templates | | reflection | |
+|---|---|---|---|---|
+| | time | compiler memory | time | compiler memory |
+|  1 000 |  3.91 s |  494 MiB |    1.56 s | **−1 MiB** |
+|  4 000 | 43.69 s | 7857 MiB |   26.95 s | **−2 MiB** |
+| 16 000 | — | — |  434.78 s | **−12 MiB** |
+| 32 000 | — | — | 1769.78 s | **−21 MiB** |
+
+Deduplicating with reflection costs the compiler *no measurable memory at all*: the peak of the
+translation unit that deduplicates is the peak of the one that does not, within ±21 MiB, and the
+difference is as often negative as positive. The template implementation over the same range grows
+×4 per doubling and passes 21 GiB at 8 000 mentions. Both are quadratic in *time*; reflection is
+quadratic with a smaller constant.
+
+The ceiling is the compiler's, not the library's: past **65 535 type mentions** Clang's `sizeof...`
+silently returns a wrong number ([LLVM #119600](https://github.com/llvm/llvm-project/issues/119600)
+— GCC computes it correctly), so lists of 100 000 types are not expensive, they are unrepresentable.
+Before that you meet `-fbracket-depth` at ~2 000 mentions and a compiler stack overflow at ~12 000.
+
+Method, full tables, the four walls and what happens if the linear membership scan is replaced with
+a hash table: [docs/benchmarks.md](docs/benchmarks.md).
 
 ## Requirements
 

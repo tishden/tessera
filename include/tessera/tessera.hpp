@@ -11,6 +11,7 @@
 /// |----------------------------|---------------------------------------------------------------|
 /// | `tessera/type_list.hpp`    | `type_list`, the type algebra, `flatten_t`, `elements_of`      |
 /// | `tessera/mosaic.hpp`       | `mosaic`, `of`, `broadcast`                                    |
+/// | `tessera/graph.hpp`        | `resolve`, `dependencies_of` — transitive, topologically sorted |
 /// | `tessera/value_list.hpp`   | `value_list`, runtime → compile-time dispatch                  |
 /// | `tessera/reflect.hpp`      | `type_name`, the static-reflection seam                        |
 /// | `tessera/algebra.hpp`      | the two implementations of the list algebra and their selection |
@@ -18,6 +19,7 @@
 
 #include "tessera/algebra.hpp"
 #include "tessera/config.hpp"
+#include "tessera/graph.hpp"
 #include "tessera/mosaic.hpp"
 #include "tessera/reflect.hpp"
 #include "tessera/type_list.hpp"
