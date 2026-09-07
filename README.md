@@ -30,6 +30,26 @@ engine.get<FrameBuffer>().width = 1920;          // addressed by type
 engine.for_each([](auto& service) { /* … */ });  // straight-line code, no indirection
 ```
 
+## Getting it
+
+Header-only and dependency-free: copying `include/tessera` into a project is a valid install.
+
+```cmake
+find_package(tessera REQUIRED)          # or add_subdirectory(external/tessera)
+target_link_libraries(my_app PRIVATE tessera::tessera)
+```
+
+**C++23** — the library uses explicit object parameters. Clang 18+, GCC 14+, MSVC 19.40+. Tested on
+Clang 21, Clang 22 (portable, fold and builtin backends), GCC 15, and the P2996 fork of Clang for
+the reflection backend; CI covers Clang 18 and GCC 14 on every backend they can build.
+
+| | |
+|---|---|
+| **What it is** | [Why](#why) · [The three pieces](#the-three-pieces) |
+| **What it does** | [Dependency resolution](#dependencies-resolved-and-ordered) · [Runtime → compile-time](#from-a-runtime-value-back-to-a-compile-time-one) · [Two implementations](#two-implementations-of-the-same-algebra) |
+| **What it costs** | [Benchmarks](#what-it-costs) · [When not to use it](#when-not-to-use-it) · [Compiler limits](#compiler-limits) |
+| **Reference** | [API](docs/reference.md) · [Design](docs/design.md) · [Benchmarks](docs/benchmarks.md) · [Reflection](docs/reflection.md) · [Examples](examples/) |
+
 ## Why
 
 Wiring a system out of components usually costs one of three things: a container of base-class
@@ -72,22 +92,6 @@ Configuration and introspection:
 
 Full API: [docs/reference.md](docs/reference.md). Design and internals:
 [docs/design.md](docs/design.md).
-
-## From a runtime value back to a compile-time one
-
-```cpp
-enum class Format { Png, Jpeg, WebP };
-
-using SupportedFormats = LinkedDecoders::values<Format, format_of>;  // collected from the decoders
-
-SupportedFormats::dispatch(file.format, [&]<Format F>() {
-    Decoder<F>::decode(file.bytes);   // F is a compile-time constant again
-});
-```
-
-Measured at **2.00 ns** per dispatch against **5.13 ns** for an `unordered_map` of function
-pointers, and system iteration at **0.49 ns** per call against **5.12 ns** through a vector of
-virtual interfaces (see [docs/benchmarks.md](docs/benchmarks.md) for the full setup).
 
 ## Dependencies, resolved and ordered
 
@@ -138,6 +142,22 @@ per element of every list on the stack, so it is 510 services in a chain, ~1010 
 of one service, or 512 roots. A hundred services in a shallow graph cost about a second and come
 nowhere near it. Full tables in [docs/benchmarks.md §1d](docs/benchmarks.md).
 
+## From a runtime value back to a compile-time one
+
+```cpp
+enum class Format { Png, Jpeg, WebP };
+
+using SupportedFormats = LinkedDecoders::values<Format, format_of>;  // collected from the decoders
+
+SupportedFormats::dispatch(file.format, [&]<Format F>() {
+    Decoder<F>::decode(file.bytes);   // F is a compile-time constant again
+});
+```
+
+Measured at **2.00 ns** per dispatch against **5.13 ns** for an `unordered_map` of function
+pointers, and system iteration at **0.49 ns** per call against **5.12 ns** through a vector of
+virtual interfaces (see [docs/benchmarks.md](docs/benchmarks.md) for the full setup).
+
 ## Two implementations of the same algebra
 
 Everything the library does with type lists — assembling, splicing, deduplicating, filtering — goes
@@ -176,33 +196,13 @@ so `tests/algebra_backends.test.cpp` can run both on the same input and assert t
 *identical type*. That is the property that makes the substitution safe, and it is checked rather
 than assumed.
 
-## Measured
+## What it costs
 
-A library that does its work during translation has to be measured during translation.
-`benchmarks/run_compile_bench.py` compiles one translation unit per configuration and reads the
-compiler's own resource usage with `os.wait4`, so peak memory is an exact high-water mark rather
-than a sample. The workload: N systems declaring four overlapping dependencies each — 4N type
-mentions flat-mapped and deduplicated down to N, then assembled into a mosaic.
+Everything here is reproducible from the repository; the method, the full tables and the caveats are
+in [docs/benchmarks.md](docs/benchmarks.md). The short version:
 
-Each table below names the toolchain it was measured on, and they are not all the same one: the
-`builtin` backend needs Clang 22, the reflection backend needs the P2996 fork, and neither is the
-compiler the resolution numbers were taken on. Compare within a table, not across them.
-
-**Compile time and compiler memory** (Clang 22.1.8, `-std=c++23 -O0`):
-
-| components | `std::tuple` of N | `mosaic` of N | assembly, portable | assembly, builtin | assembly, fold |
-|---|---|---|---|---|---|
-| 64  | 0.80 s / 114 MiB | 0.74 s / 101 MiB | 1.18 s / 136 MiB | 0.95 s / 113 MiB | 1.19 s / 135 MiB |
-| 128 | 1.45 s / 162 MiB | 1.50 s / 128 MiB | 2.93 s / 270 MiB | 2.07 s / 157 MiB | 2.87 s / 241 MiB |
-| 256 | 3.46 s / 316 MiB | 4.54 s / 227 MiB | 8.98 s / 793 MiB | 5.71 s / 305 MiB | **fails** |
-
-Reading it: a `mosaic` costs about what a `std::tuple` of the same components costs — the container
-is not where the time goes. Assembling it out of what the components declare is, and that is the
-part the implementations differ in. The fold stops compiling entirely at 256 components: one
-instantiation level per element runs past Clang's 1024-deep limit.
-
-**Run time** (`-O2`, Intel Core i7-3820 @ 3.60 GHz, Clang 21.1.8, best of seven) — what the
-compile-time assembly buys:
+**At run time** (`-O2`, Intel Core i7-3820 @ 3.60 GHz, Clang 21.1.8, best of seven) — this is what
+the compile-time assembly buys:
 
 | operation | Tessera | the usual alternative |
 |---|---|---|
@@ -210,25 +210,22 @@ compile-time assembly buys:
 | runtime value → compile-time constant | **2.00 ns** `value_list::dispatch` | 5.13 ns `unordered_map` of function pointers |
 | `sizeof` a mosaic | identical to `std::tuple` of the same elements | — |
 
-**What the reflection implementation changes.** On the P2996 fork of Clang, where both
-implementations can be built and compared, subtracting the `mosaic` column isolates the assembly
-step itself — splicing, deduplicating, producing the type:
+**At compile time**, which is where the design is actually paid for:
 
-| components | | templates | reflection | change |
-|---|---|---|---|---|
-| 128 | time   | 1.44 s  | 1.15 s | **−20 %** |
-| 128 | memory | 142 MiB | 7 MiB  | **−95 %** |
-| 256 | time   | 4.26 s  | 3.41 s | **−20 %** |
-| 256 | memory | 569 MiB | 15 MiB | **−97 %** |
+* **the container is not the cost.** A `mosaic` of N components compiles within a few percent of a
+  `std::tuple` of the same components. Assembling it out of what the components declare is the
+  expensive part;
+* **assembly is superlinear.** 256 components cost 9.0 s and 793 MiB on the portable backend against
+  5.7 s and 305 MiB with Clang 22's `__builtin_dedup_pack` — which is the argument for keeping the
+  implementation replaceable. Doubling the count roughly triples the time;
+* **resolution is cheaper than assembly**, 1.10 s and 142 MiB at 256 services against 2.95 s and
+  558 MiB, because a membership test over a list that already exists creates no types while
+  deduplication rebuilds the list;
+* the practical range is components **in the tens to low hundreds** per translation unit. Past that
+  the answer is fewer types per translation unit, not a cleverer metafunction.
 
-The memory cost of assembly nearly disappears: deduplicating a `std::vector<std::meta::info>` and
-substituting once leaves nothing behind, while the template implementation creates — and the
-compiler retains — a class specialization for every intermediate list. Time falls by about a fifth,
-not by a factor: constant evaluation does the same quadratic membership work, just without
-materializing types. Reflection is a cheaper representation here, not a better algorithm.
-
-**Pushed to the limit.** Deduplication measured on its own — the same list with and without the
-operation, so the cost of instantiating the types is subtracted out — over a 32× range:
+**What reflection changes.** Measured on the P2996 fork, where both implementations can be built and
+compared, deduplication on its own over a 32× range:
 
 | type mentions | templates | | reflection | |
 |---|---|---|---|---|
@@ -238,65 +235,60 @@ operation, so the cost of instantiating the types is subtracted out — over a 3
 | 16 000 | — | — |  434.78 s | **−12 MiB** |
 | 32 000 | — | — | 1769.78 s | **−21 MiB** |
 
-Deduplicating with reflection costs the compiler *no measurable memory at all*: the peak of the
-translation unit that deduplicates is the peak of the one that does not, within ±21 MiB, and the
-difference is as often negative as positive. The template implementation over the same range grows
-×4 per doubling and passes 21 GiB at 8 000 mentions. Both are quadratic in *time*; reflection is
-quadratic with a smaller constant.
+Deduplicating with reflection costs the compiler **no measurable memory at all** — the peak of the
+translation unit that deduplicates is the peak of the one that does not, and the difference is as
+often negative as positive. The template implementation over the same range grows ×4 per doubling
+and passes 21 GiB. Both are quadratic in *time*, and reflection wins about a fifth of it: it is a
+cheaper representation for the same algorithm, not a better algorithm.
 
-The ceiling is the compiler's, not the library's: past **65 535 type mentions** Clang's `sizeof...`
-silently returns a wrong number ([LLVM #119600](https://github.com/llvm/llvm-project/issues/119600)
-— GCC computes it correctly), so lists of 100 000 types are not expensive, they are unrepresentable.
-Before that you meet `-fbracket-depth` at ~2 000 mentions and a compiler stack overflow at ~12 000.
+## When not to use it
 
-Method, full tables, the four walls and what happens if the linear membership scan is replaced with
-a hash table: [docs/benchmarks.md](docs/benchmarks.md).
+* **The set is genuinely dynamic** — plugins loaded from `.so`, a component list read from a config
+  file, anything that does not exist when the program is compiled. A virtual call costs 5 ns and
+  that is a fair price for something you actually need.
+* **More than a few hundred types per translation unit.** Everything here is superlinear, and no
+  implementation of the algebra changes that.
+* **A component needs two of the same thing.** A mosaic holds one value per type; two frame buffers
+  means two types (`FrameBuffer<Colour>`, `FrameBuffer<Depth>`), which is usually what a typed
+  design wanted anyway.
+* **The team is not ready to read it.** A compile error in template-heavy code is its own genre, and
+  that is a real operating cost to budget alongside build time.
 
-## Compiler limits worth knowing about
+## Compiler limits
 
-Pushing this library to its ceiling means meeting the compiler's, and most of those are not
-documented anywhere obvious. Everything here was hit while producing the tables above; the ones
-raised by a flag are worth knowing before you conclude your metaprogram is at fault.
+None of these is reached by ordinary use, and the first ceiling anyone actually meets is compiler
+memory. They are listed because two of them fail in ways that do not point at themselves, and
+because each cost an afternoon to identify.
 
-| Limit | Where it bites | What it looks like | What to do |
-|---|---|---|---|
-| **`sizeof...` overflows silently** past 65 535 for a type pack and 32 768 for a non-type pack, on Clang | any list that big | **no diagnostic at all** — a wrong number. `sizeof...` of a 100 000-element type pack answers 34 464 | `static_assert` the length of every long list. GCC computes it correctly; this is [LLVM #119600](https://github.com/llvm/llvm-project/issues/119600), open since 2024 and labelled a miscompilation |
-| **Template instantiation depth**, 1024 on Clang and 900 on GCC | `resolve`, which folds over lists recursively and so spends a level per element on the stack: **510** links in a chain, **~1010** direct dependencies of one service, **512** roots over a shallow DAG. The reference `FOLD` backend dies here too, at ~256 components | `recursive template instantiation exceeded maximum depth` | keep the graph shallow and the root list short and it is nowhere near. `-ftemplate-depth` raises it, but see the next row |
-| **The compiler's own stack** | fold expressions over ~12 000 arguments, and deep instantiation once `-ftemplate-depth` is raised | `SIGSEGV`, four seconds in, 165 MiB used, **nothing printed** | `ulimit -s unlimited`. A crash with no diagnostic reads like a library bug and is not one |
-| **Expression nesting limit**, 2048 | a fold expression over a pack larger than that — which both algebra implementations do | `instantiating fold expression with 4000 arguments exceeded expression nesting limit` | `-fbracket-depth=131072` |
-| **Constant-evaluation budget** | the reflection backend, whose deduplication is an ordinary loop rather than instantiations | `not a constant expression`, pointing at the splice rather than at the loop | `-fconstexpr-steps` |
-| **CMake picks the wrong standard** for the P2996 fork | building the reflection backend | a wall of errors from inside `<meta>`; reflection was silently off because CMake settled on `-std=gnu++2b` | `cmake/toolchains/clang-p2996.cmake` clears `CMAKE_CXX_STANDARD_DEFAULT` and passes the flags itself |
+| Limit | What it looks like | What to do |
+|---|---|---|
+| **`sizeof...` overflows silently** past 65 535 for a type pack (32 768 for a non-type pack), on Clang | **no diagnostic** — just a wrong number: a 100 000-element pack answers 34 464 | `static_assert` the length of every long list. GCC is correct; [LLVM #119600](https://github.com/llvm/llvm-project/issues/119600) |
+| **Instantiation depth** (1024 Clang / 900 GCC) — `resolve` spends a level per list element on the stack: 510 links in a chain, ~1010 dependencies of one service, 512 roots | `recursive template instantiation exceeded maximum depth` | keep graphs shallow and root lists short; `-ftemplate-depth` with `ulimit -s unlimited` |
+| **The compiler's own stack**, at fold expressions over ~12 000 arguments | `SIGSEGV`, seconds in, **nothing printed** | `ulimit -s unlimited` |
+| **Expression nesting**, 2048 | `instantiating fold expression with 4000 arguments exceeded expression nesting limit` | `-fbracket-depth=131072` |
+| **Constant-evaluation budget** (reflection backend) | `not a constant expression`, pointing at the splice rather than the loop | `-fconstexpr-steps` |
+| **CMake picks the wrong standard** for the P2996 fork | a wall of errors from inside `<meta>`; reflection was silently off | use `cmake/toolchains/clang-p2996.cmake` |
 
-None of these is reached by ordinary use — the library is for components in the tens to low
-hundreds per translation unit, and the first limit anyone actually meets is compiler memory. They
-are recorded because finding each one cost an afternoon, and because the first two fail in ways that
-do not point at themselves.
+How each was found, and where each backend stops: [docs/benchmarks.md](docs/benchmarks.md).
 
-## Requirements
-
-C++23, for explicit object parameters — Clang 18+, GCC 14+, MSVC 19.40+. Header-only: copying
-`include/tessera` into a project is a valid install.
-
-Tested on Clang 21, Clang 22 (portable, fold and builtin backends), GCC 15, and the P2996 fork of
-Clang for the reflection backend; CI covers Clang 18 and GCC 14 on every backend they can build.
-
-## Building
+## Examples and building
 
 ```bash
-cmake -S . -B build -G Ninja
-cmake --build build
+cmake -S . -B build -G Ninja && cmake --build build
 ctest --test-dir build --output-on-failure
-
-./build/examples/02_system_assembly     # the assembly example, end to end
-./build/benchmarks/bench_runtime        # memory and dispatch measurements
-python3 benchmarks/run_compile_bench.py --backends portable,builtin,fold
 ```
 
-With CMake as a dependency:
+| Example | Shows |
+|---|---|
+| [`01_basics`](examples/01_basics.cpp) | building a mosaic, addressing it by type, walking it |
+| [`02_system_assembly`](examples/02_system_assembly.cpp) | independent systems declaring dependencies, assembled with `flat_map` |
+| [`03_runtime_dispatch`](examples/03_runtime_dispatch.cpp) | a runtime value dispatched back to a compile-time constant |
+| [`04_dependency_resolution`](examples/04_dependency_resolution.cpp) | `resolve`: transitive closure, topological order, start-up sequence |
 
-```cmake
-find_package(tessera REQUIRED)          # or add_subdirectory(external/tessera)
-target_link_libraries(my_app PRIVATE tessera::tessera)
+```bash
+./build/examples/04_dependency_resolution
+./build/benchmarks/bench_runtime                 # object size and dispatch measurements
+python3 benchmarks/run_compile_bench.py          # what it costs the compiler
 ```
 
 ## Contributing

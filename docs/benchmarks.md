@@ -231,7 +231,8 @@ enough to say what would have happened without watching it happen.
   unit, to within ±21 MiB across a 32× range, and the sign of the difference is as often negative as
   positive. The template implementation over the same range goes 494 → 1992 → 7857 MiB, ×3.94 to
   ×4.03 per doubling: exactly quadratic, exactly as many retained class specializations as the
-  algorithm creates.
+  algorithm creates. This supersedes §1b: the 15 MiB measured there was not a small cost but the
+  noise floor of a comparison that still had the mosaic's own allocation in both sides.
 * **Both are quadratic in time, and reflection is quadratic with a smaller constant.** The scan path
   goes ×4.21, ×4.10, ×4.03, ×4.00, ×4.07 per doubling — textbook. It is doing the same membership
   test the template implementation does; it just is not materialising a type for each intermediate
@@ -356,9 +357,9 @@ Net of the mosaic, i.e. the assembly step alone:
   appends grow. Doubling N roughly triples the resolution cost, which is the same shape as the rest
   of the library and puts the practical range in the same place — services in the tens to low
   hundreds per translation unit.
-* **Depth is bounded by the longest chain, not by the count.** The benchmark graph is `log N` deep,
-  so 256 services cost eight levels of recursion. A chain of 256 services would cost 256, and that is
-  the number to watch against the compiler's instantiation limit — not the size of the graph.
+* **Depth is spent per list element, not per level of the graph** — see the ceilings below. The
+  benchmark graph being `log N` deep is not what keeps it inside the limit; the lists it folds over
+  being short is.
 
 ### How far resolution goes, and what stops it
 

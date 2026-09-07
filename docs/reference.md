@@ -11,6 +11,7 @@ stability promise. One umbrella header pulls in the library:
 |---|---|
 | `tessera/type_list.hpp` | `type_list`, the type algebra, `flatten_t`, `unique_t`, `concat_t`, `elements_of` |
 | `tessera/mosaic.hpp` | `mosaic`, `of`, `mapped_of`, `broadcast` |
+| `tessera/graph.hpp` | `resolve`, `resolved_t`, `dependencies_of`, `has_dependency_cycle`, `is_topologically_sorted` |
 | `tessera/value_list.hpp` | `value_list`, `to_value_list_t` |
 | `tessera/reflect.hpp` | `type_name`, the static-reflection seam |
 | `tessera/algebra.hpp` | the two implementations of the algebra and their selection, `algebra_backend_name` |
@@ -165,8 +166,11 @@ of include order or which root was named first — so it can be pinned with `sta
 fail. A node reached twice by different paths is not a cycle; only a back edge to a node still on
 the current path is.
 
-**Cost.** The traversal is bounded by instantiation depth in the *longest dependency chain*, not in
-the number of services, and its price relative to `of<...>` is measured in
+**Cost.** The traversal folds over lists recursively, so it spends one instantiation level per
+element of every list on the current stack — the chain being walked, the dependency list being
+iterated, and the root list. Against Clang's default `-ftemplate-depth=1024` that is 510 links in a
+chain, ~1010 direct dependencies of one service, or 512 roots; keep the graph shallow and the root
+list short and the limit is nowhere near. Its price relative to `of<...>`, and the ceilings, are in
 [benchmarks.md §1d](benchmarks.md).
 
 ---

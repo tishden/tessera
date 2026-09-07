@@ -25,7 +25,9 @@ tessera 1.1.0 — algebra: reflection (P2996)
 Isolating the assembly step (total minus the cost of the mosaic itself, which is identical on both
 implementations): at 256 components it costs **3.41 s and 15 MiB** of compiler memory against
 **4.26 s and 569 MiB** for the template implementation — a fifth less time and about a fortieth of
-the memory. Full tables in [benchmarks.md §1b](benchmarks.md).
+the memory. Full tables in [benchmarks.md §1b](benchmarks.md); [§1c](benchmarks.md) revises the
+memory figure further — measured against a translation unit that does not deduplicate at all, the
+cost is not 15 MiB but nothing measurable.
 
 ### Getting a toolchain
 

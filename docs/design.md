@@ -194,8 +194,12 @@ in the specialization that should recurse.
 
 Two consequences worth stating:
 
-* **Instantiation depth is bounded by the longest dependency chain**, not by the number of services.
-  A hundred services in a shallow graph cost far less depth than ten in a chain.
+* **Instantiation depth is spent per list element on the stack, not per level of the graph.**
+  `walk_list` recurses into the tail of the list it is folding over, so the budget goes on the
+  length of the chain *and* the length of a service's dependency list *and* the length of the root
+  list. Measured against Clang's default 1024: 510 links in a chain, ~1010 direct dependencies of
+  one service, 512 roots ([benchmarks.md §1d](benchmarks.md)). The shape of the graph is what
+  bounds it, not the number of services.
 * **The order is a function of the declarations alone.** Nothing consults include order, file order,
   or the order the roots happened to be written in beyond using it as the DFS start order — so the
   resulting type is stable and can be pinned with `static_assert`, which is what
@@ -238,6 +242,8 @@ Numbers are in [benchmarks.md](benchmarks.md); the shape of them is:
   is not where the time goes;
 * assembling that mosaic out of N components' declarations (4N type mentions) roughly doubles it on
   the portable backend and adds about a quarter on the builtin one;
+* resolving a graph transitively costs *less* than flattening a flat list of the same size — a
+  membership test over an existing list creates no types, while deduplication rebuilds the list;
 * everything grows superlinearly, so the practical range is components in the tens to low hundreds
   per translation unit — which is the range this design is for. Beyond that the answer is not a
   faster metafunction, it is fewer types per translation unit.
