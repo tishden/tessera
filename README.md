@@ -4,33 +4,30 @@
 C++23, no dependencies.
 
 A *tessera* is a single tile of a mosaic. A `tessera::mosaic<Ts...>` holds exactly one value per
-type and is addressed by type rather than by index; `tessera::of<...>` assembles one from a list of
-types that may be redundant, nested, or contributed by parts of the program that know nothing about
-each other, and `tessera::resolve<...>` works the list out for itself by following what each
-component declares.
+type and is addressed by type rather than by index, and `tessera::of<...>` assembles one from a
+list of types that may be redundant, nested, or contributed by parts of the program that know
+nothing about each other.
 
 ```cpp
 #include <tessera/tessera.hpp>
 
-struct Clock       {};
+struct Clock {};
 struct FrameBuffer { int width, height; };
-struct AssetCache  { using dependencies = tessera::type_list<Clock>; int loadedMeshes; };
+struct AssetCache  { int loadedMeshes; };
 
-// Every component declares only what it *directly* needs — nobody maintains a central list.
-struct Renderer { using dependencies = tessera::type_list<FrameBuffer, AssetCache>; };
-struct Physics  { using dependencies = tessera::type_list<Clock>; };
+// Every system declares what it needs — nobody maintains a central list.
+struct Renderer { using dependencies = tessera::type_list<Clock, FrameBuffer, AssetCache>; };
+struct Physics  { using dependencies = tessera::type_list<Clock, FrameBuffer>; };
 
-using Engine = tessera::resolve<Renderer, Physics>;
+using Systems = tessera::of<Renderer, Physics>;
+using Engine  = Systems::flat_map<tessera::dependencies_of_t>;
 
-// The closure of those declarations, deduplicated and ordered so that nothing comes before what
-// it needs — worked out before the program runs.
-static_assert(std::same_as<Engine,
-    tessera::mosaic<FrameBuffer, Clock, AssetCache, Renderer, Physics>>);
-static_assert(tessera::is_topologically_sorted<Engine>);
+// The union of the declarations, deduplicated, resolved before the program runs.
+static_assert(std::same_as<Engine, tessera::mosaic<Clock, FrameBuffer, AssetCache>>);
 
 Engine engine;
 engine.get<FrameBuffer>().width = 1920;          // addressed by type
-engine.for_each([](auto& service) { /* … */ });  // in dependency order, no indirection
+engine.for_each([](auto& service) { /* … */ });  // straight-line code, no indirection
 ```
 
 ## Why
@@ -94,9 +91,11 @@ virtual interfaces (see [docs/benchmarks.md](docs/benchmarks.md) for the full se
 
 ## Dependencies, resolved and ordered
 
-`of<...>` puts together a list you have already written out. `resolve<...>` works out the list:
-each service declares only its **direct** dependencies, and the closure — plus the order to start it
-in — is computed while the program is being compiled.
+`flat_map` above collects one level: each system's declared dependencies, merged and deduplicated.
+That is the right amount when the things being collected are leaves. When they have dependencies of
+their own, `resolve<...>` works the whole list out instead — each service declares only its
+**direct** dependencies, and the closure, plus the order to start it in, is computed while the
+program is being compiled.
 
 ```cpp
 struct Config         {};
