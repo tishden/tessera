@@ -376,9 +376,10 @@ Identical within run-to-run noise: the traversal is templates that nothing insta
 
 ## 2. Run time and object memory
 
-`benchmarks/runtime/bench_runtime.cpp`, built at `-O2`, Intel Core i7-3820, Clang 21.1.8. Both sides
-of every comparison are fenced with the same optimization barrier, so neither loop can be folded
-away.
+`benchmarks/runtime/bench_runtime.cpp`, built at `-O2`, Intel Core i7-3820 @ 3.60 GHz, Clang 21.1.8.
+Both sides of every comparison are fenced with the same optimization barrier, so neither loop can be
+folded away. Best of seven runs, matching the convention of the compile-time tables; the spread
+across those runs is under 5 % for every row, and the `unordered_map` row is the widest of them.
 
 ### Memory (`sizeof`, bytes)
 
@@ -400,7 +401,7 @@ Eight systems, 16 M calls.
 | dispatch | ns/call |
 |---|---|
 | `mosaic::for_each` (assembled at compile time) | **0.49** |
-| virtual calls through a `vector<unique_ptr<Interface>>` | 5.31 |
+| virtual calls through a `vector<unique_ptr<Interface>>` | 5.12 |
 
 ### Runtime value → compile-time constant
 
@@ -408,8 +409,8 @@ Eight op-codes, 8 M dispatches.
 
 | dispatch | ns/lookup |
 |---|---|
-| `value_list::dispatch` | **2.05** |
-| `unordered_map` of function pointers | 5.42 |
+| `value_list::dispatch` | **2.00** |
+| `unordered_map` of function pointers | 5.13 |
 
 The comparison is not "templates are faster than virtual functions" in the abstract — it is that a
 system set fixed at compile time needs no indirection to walk, and a constant known at compile

@@ -4,32 +4,33 @@
 C++23, no dependencies.
 
 A *tessera* is a single tile of a mosaic. A `tessera::mosaic<Ts...>` holds exactly one value per
-type and is addressed by type rather than by index, and `tessera::of<...>` assembles one from a
-list of types that may be redundant, nested, or contributed by parts of the program that know
-nothing about each other.
+type and is addressed by type rather than by index; `tessera::of<...>` assembles one from a list of
+types that may be redundant, nested, or contributed by parts of the program that know nothing about
+each other, and `tessera::resolve<...>` works the list out for itself by following what each
+component declares.
 
 ```cpp
 #include <tessera/tessera.hpp>
 
-struct Clock {};
+struct Clock       {};
 struct FrameBuffer { int width, height; };
-struct AssetCache  { int loadedMeshes; };
+struct AssetCache  { using dependencies = tessera::type_list<Clock>; int loadedMeshes; };
 
-// Every system declares what it needs — nobody maintains a central list.
-struct Renderer { using dependencies = tessera::type_list<Clock, FrameBuffer, AssetCache>; };
-struct Physics  { using dependencies = tessera::type_list<Clock, FrameBuffer>; };
+// Every component declares only what it *directly* needs — nobody maintains a central list.
+struct Renderer { using dependencies = tessera::type_list<FrameBuffer, AssetCache>; };
+struct Physics  { using dependencies = tessera::type_list<Clock>; };
 
-template<class T> using dependencies_of = typename T::dependencies;
+using Engine = tessera::resolve<Renderer, Physics>;
 
-using Systems = tessera::of<Renderer, Physics>;
-using Engine  = Systems::flat_map<dependencies_of>;
-
-// The union of the declarations, deduplicated, resolved before the program runs.
-static_assert(std::same_as<Engine, tessera::mosaic<Clock, FrameBuffer, AssetCache>>);
+// The closure of those declarations, deduplicated and ordered so that nothing comes before what
+// it needs — worked out before the program runs.
+static_assert(std::same_as<Engine,
+    tessera::mosaic<FrameBuffer, Clock, AssetCache, Renderer, Physics>>);
+static_assert(tessera::is_topologically_sorted<Engine>);
 
 Engine engine;
 engine.get<FrameBuffer>().width = 1920;          // addressed by type
-engine.for_each([](auto& service) { /* … */ });  // straight-line code, no indirection
+engine.for_each([](auto& service) { /* … */ });  // in dependency order, no indirection
 ```
 
 ## Why
@@ -45,6 +46,10 @@ you would have written by hand.
 * **Assembled, not declared.** `flat_map` collects dependencies, duplicates collapse, empty lists
   disappear. Adding a system adds its services; removing the last user of a service removes it from
   the binary.
+* **Resolved transitively, and in order.** `resolve` follows each component's declared dependencies
+  to their closure and sorts it topologically, so every element is preceded by everything it needs.
+  Walking the container front to back is a valid start-up order and backwards a valid shutdown
+  order — neither sequence written by anyone, neither present in the binary as data.
 * **Free at run time.** No virtual calls, no type erasure, no allocation; stateless components take
   zero bytes (`[[no_unique_address]]`).
 * **Honest about compile time.** The one real cost of this design is what it does to the compiler,
@@ -83,8 +88,8 @@ SupportedFormats::dispatch(file.format, [&]<Format F>() {
 });
 ```
 
-Measured at **2.04 ns** per dispatch against **5.51 ns** for an `unordered_map` of function
-pointers, and system iteration at **0.50 ns** per call against **5.25 ns** through a vector of
+Measured at **2.00 ns** per dispatch against **5.13 ns** for an `unordered_map` of function
+pointers, and system iteration at **0.49 ns** per call against **5.12 ns** through a vector of
 virtual interfaces (see [docs/benchmarks.md](docs/benchmarks.md) for the full setup).
 
 ## Dependencies, resolved and ordered
@@ -123,9 +128,10 @@ types you cannot add a member to. The order comes out of the declarations alone 
 not root order beyond where the walk starts — so it is stable enough to assert on.
 
 Following the graph costs **less** than flattening a flat list of the same size: 1.10 s and 142 MiB
-of compiler memory at 256 services, against 2.95 s and 558 MiB for the deduplicating assembly, since
-a membership test over an existing list creates no types while deduplication rebuilds the list
-([docs/benchmarks.md §1d](docs/benchmarks.md)).
+of compiler memory at 256 services, against 2.95 s and 558 MiB for the deduplicating assembly
+(Clang 21.1.8, net of the mosaic both build). A membership test over a list that already exists
+creates no types, while deduplication rebuilds the list and leaves a specialization behind at every
+step — [docs/benchmarks.md §1d](docs/benchmarks.md).
 
 ## Two implementations of the same algebra
 
@@ -173,6 +179,10 @@ compiler's own resource usage with `os.wait4`, so peak memory is an exact high-w
 than a sample. The workload: N systems declaring four overlapping dependencies each — 4N type
 mentions flat-mapped and deduplicated down to N, then assembled into a mosaic.
 
+Each table below names the toolchain it was measured on, and they are not all the same one: the
+`builtin` backend needs Clang 22, the reflection backend needs the P2996 fork, and neither is the
+compiler the resolution numbers were taken on. Compare within a table, not across them.
+
 **Compile time and compiler memory** (Clang 22.1.8, `-std=c++23 -O0`):
 
 | components | `std::tuple` of N | `mosaic` of N | assembly, portable | assembly, builtin | assembly, fold |
@@ -186,12 +196,13 @@ is not where the time goes. Assembling it out of what the components declare is,
 part the implementations differ in. The fold stops compiling entirely at 256 components: one
 instantiation level per element runs past Clang's 1024-deep limit.
 
-**Run time** (`-O2`, Intel Core i7-3820) — what the compile-time assembly buys:
+**Run time** (`-O2`, Intel Core i7-3820 @ 3.60 GHz, Clang 21.1.8, best of seven) — what the
+compile-time assembly buys:
 
 | operation | Tessera | the usual alternative |
 |---|---|---|
-| iterate 8 systems, per call | **0.50 ns** `mosaic::for_each` | 5.34 ns virtual through a `vector` |
-| runtime value → compile-time constant | **2.05 ns** `value_list::dispatch` | 5.34 ns `unordered_map` of function pointers |
+| iterate 8 systems, per call | **0.49 ns** `mosaic::for_each` | 5.12 ns virtual through a `vector` |
+| runtime value → compile-time constant | **2.00 ns** `value_list::dispatch` | 5.13 ns `unordered_map` of function pointers |
 | `sizeof` a mosaic | identical to `std::tuple` of the same elements | — |
 
 **What the reflection implementation changes.** On the P2996 fork of Clang, where both
