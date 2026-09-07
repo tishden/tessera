@@ -360,6 +360,40 @@ Net of the mosaic, i.e. the assembly step alone:
   so 256 services cost eight levels of recursion. A chain of 256 services would cost 256, and that is
   the number to watch against the compiler's instantiation limit — not the size of the graph.
 
+### How far resolution goes, and what stops it
+
+The traversal folds over lists recursively — `walk_list` recurses into the tail — so it spends one
+instantiation level per element of every list on the current stack. That, and not the size of the
+graph, is what runs out. Measured on Clang 21.1.8 at the default `-ftemplate-depth=1024`:
+
+| graph shape | ceiling | what fails |
+|---|---|---|
+| a chain, depth equal to size | **510 links** (511 fails) | ~2 levels per link |
+| one root with a wide dependency list | **~1010 direct dependencies** (1000 compiles, 1020 fails) | ~1 level per element |
+| N roots over a DAG of `log N` depth | **512 roots** (1024 fails) | ~2 levels per root |
+
+All three fail the same way — `recursive template instantiation exceeded maximum depth of 1024` —
+which at least points at itself, unlike most of the walls in §1c.
+
+Cost of the DAG shape up to that ceiling:
+
+| N services | time | compiler memory |
+|---|---|---|
+|  64 |  0.60 s |  116 MiB |
+| 128 |  1.35 s |  168 MiB |
+| 256 |  4.16 s |  375 MiB |
+| 512 | 14.23 s | 1161 MiB |
+| 1024 | *depth* | — |
+
+Raising `-ftemplate-depth` does work, with `ulimit -s unlimited` alongside it — without the larger
+stack the compiler segfaults instead of diagnosing. A chain of 1000 services then compiles in
+**80.74 s and 5.3 GiB**, which is the number that says a chain is the wrong shape rather than a
+bigger budget being the answer: 1000 services in the `log N` DAG never get near that.
+
+The practical reading: keep the graph shallow and the root list short, and the ceiling is nowhere
+near. A hundred services in a shallow graph cost 1.35 s at N = 128 and never approach the depth
+limit; a hundred services in a chain would.
+
 ### The header costs nothing to those who do not use it
 
 `graph.hpp` is included by the umbrella header, so it is worth checking that adding it did not tax

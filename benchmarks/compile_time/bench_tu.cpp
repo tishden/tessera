@@ -7,7 +7,7 @@
 //
 //   -DTESSERA_BENCH_N=<count>   how many distinct component types the system ends up with
 //   -DTESSERA_BENCH_IMPL=<id>   0 baseline | 1 std::tuple | 2 mosaic | 3 assembly | 4 algebra
-//                               | 5 setup | 6 resolve
+//                               | 5 setup | 6 resolve | 7 resolve_chain
 //
 // 0 BASELINE  — headers only, so the fixed cost of the toolchain can be subtracted.
 // 1 TUPLE     — N components in a std::tuple, addressed by type with std::get<T>.
@@ -29,6 +29,9 @@
 // 6 RESOLVE   — N services in a DAG (each depending on three smaller ones), resolved transitively
 //               and topologically sorted by `tessera::resolve`. Against (3) this is what following
 //               the graph costs over merely flattening a list that was already complete.
+// 7 RESOLVE_CHAIN — the same resolution over the worst possible shape: a chain of N services, each
+//               depending on the previous one. The graph is as deep as it is large, so this is what
+//               finds the compiler's instantiation-depth limit rather than its memory limit.
 
 #include <cstddef>
 #include <cstdio>
@@ -41,6 +44,7 @@
 #define TESSERA_BENCH_ALGEBRA 4
 #define TESSERA_BENCH_SETUP 5
 #define TESSERA_BENCH_RESOLVE 6
+#define TESSERA_BENCH_RESOLVE_CHAIN 7
 
 #ifndef TESSERA_BENCH_N
 #  define TESSERA_BENCH_N 64
@@ -147,6 +151,22 @@ using Resolved = typename make_services<std::make_index_sequence<kComponentCount
 static_assert(Resolved::size == kComponentCount);
 static_assert(tessera::is_topologically_sorted<Resolved>);
 
+#elif TESSERA_BENCH_IMPL == TESSERA_BENCH_RESOLVE_CHAIN
+
+/// A single chain: `Link<N-1>` needs `Link<N-2>` needs ... needs `Link<0>`. Depth equals size, which
+/// is the shape a dependency graph should never have and the one that finds `-ftemplate-depth`.
+template<std::size_t I>
+struct Link {
+    using dependencies = tessera::type_list<Link<I - 1>>;
+};
+
+template<>
+struct Link<0> {};
+
+using Resolved = tessera::resolved_t<Link<kComponentCount - 1>>;
+static_assert(Resolved::size == kComponentCount);
+static_assert(tessera::is_topologically_sorted<Resolved>);
+
 #elif TESSERA_BENCH_IMPL == TESSERA_BENCH_SETUP
 
 /// Everything the ALGEBRA implementation does *except* deduplicating: the N component types are
@@ -184,7 +204,8 @@ using Assembled = typename make_container<std::make_index_sequence<kComponentCou
 
 int main() {
 #if TESSERA_BENCH_IMPL == TESSERA_BENCH_BASELINE || TESSERA_BENCH_IMPL == TESSERA_BENCH_ALGEBRA || \
-    TESSERA_BENCH_IMPL == TESSERA_BENCH_SETUP || TESSERA_BENCH_IMPL == TESSERA_BENCH_RESOLVE
+    TESSERA_BENCH_IMPL == TESSERA_BENCH_SETUP || TESSERA_BENCH_IMPL == TESSERA_BENCH_RESOLVE || \
+    TESSERA_BENCH_IMPL == TESSERA_BENCH_RESOLVE_CHAIN
     int sum = 0;
 #elif TESSERA_BENCH_IMPL == TESSERA_BENCH_TUPLE
     Assembled container;

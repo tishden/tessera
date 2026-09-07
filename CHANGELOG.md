@@ -54,7 +54,16 @@ All notable changes to this project are documented here. The format follows
 * Documented a hard Clang ceiling: past 65 535 type mentions `sizeof...` silently returns a wrong
   number ([LLVM #119600](https://github.com/llvm/llvm-project/issues/119600)); GCC computes it
   correctly. The `static_assert` on list length in the benchmark is what catches it.
-* A `resolve` benchmark implementation (N services in a DAG) alongside `algebra` and `setup`.
+* A `resolve` benchmark implementation (N services in a DAG) alongside `algebra` and `setup`, plus
+  `resolve_chain` — the same resolution over a chain, where depth equals size, which is what finds
+  the instantiation-depth limit rather than the memory limit.
+* [docs/benchmarks.md §1d](docs/benchmarks.md) records how far resolution goes and what stops it:
+  510 links in a chain, ~1010 direct dependencies of one service, 512 roots over a shallow DAG —
+  all of them the instantiation-depth limit, because the traversal spends a level per element of
+  every list on the stack. The limit is the *shape* of the graph, not its size.
+* README gained a table of the compiler limits met while measuring — the silent `sizeof...`
+  overflow, instantiation depth, the compiler's own stack, the expression nesting limit, the
+  constant-evaluation budget, and CMake choosing the wrong standard for the P2996 fork.
 
 ## [1.1.0] — 2026-08-28
 

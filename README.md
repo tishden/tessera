@@ -131,7 +131,13 @@ Following the graph costs **less** than flattening a flat list of the same size:
 of compiler memory at 256 services, against 2.95 s and 558 MiB for the deduplicating assembly
 (Clang 21.1.8, net of the mosaic both build). A membership test over a list that already exists
 creates no types, while deduplication rebuilds the list and leaves a specialization behind at every
-step — [docs/benchmarks.md §1d](docs/benchmarks.md).
+step.
+
+How far it goes: 512 services in a shallow DAG (14.2 s, 1.2 GiB) before the compiler's instantiation
+depth stops it, and **the limit is the shape rather than the size** — the traversal spends a level
+per element of every list on the stack, so it is 510 services in a chain, ~1010 direct dependencies
+of one service, or 512 roots. A hundred services in a shallow graph cost about a second and come
+nowhere near it. Full tables in [docs/benchmarks.md §1d](docs/benchmarks.md).
 
 ## Two implementations of the same algebra
 
@@ -246,6 +252,26 @@ Before that you meet `-fbracket-depth` at ~2 000 mentions and a compiler stack o
 
 Method, full tables, the four walls and what happens if the linear membership scan is replaced with
 a hash table: [docs/benchmarks.md](docs/benchmarks.md).
+
+## Compiler limits worth knowing about
+
+Pushing this library to its ceiling means meeting the compiler's, and most of those are not
+documented anywhere obvious. Everything here was hit while producing the tables above; the ones
+raised by a flag are worth knowing before you conclude your metaprogram is at fault.
+
+| Limit | Where it bites | What it looks like | What to do |
+|---|---|---|---|
+| **`sizeof...` overflows silently** past 65 535 for a type pack and 32 768 for a non-type pack, on Clang | any list that big | **no diagnostic at all** — a wrong number. `sizeof...` of a 100 000-element type pack answers 34 464 | `static_assert` the length of every long list. GCC computes it correctly; this is [LLVM #119600](https://github.com/llvm/llvm-project/issues/119600), open since 2024 and labelled a miscompilation |
+| **Template instantiation depth**, 1024 on Clang and 900 on GCC | `resolve`, which folds over lists recursively and so spends a level per element on the stack: **510** links in a chain, **~1010** direct dependencies of one service, **512** roots over a shallow DAG. The reference `FOLD` backend dies here too, at ~256 components | `recursive template instantiation exceeded maximum depth` | keep the graph shallow and the root list short and it is nowhere near. `-ftemplate-depth` raises it, but see the next row |
+| **The compiler's own stack** | fold expressions over ~12 000 arguments, and deep instantiation once `-ftemplate-depth` is raised | `SIGSEGV`, four seconds in, 165 MiB used, **nothing printed** | `ulimit -s unlimited`. A crash with no diagnostic reads like a library bug and is not one |
+| **Expression nesting limit**, 2048 | a fold expression over a pack larger than that — which both algebra implementations do | `instantiating fold expression with 4000 arguments exceeded expression nesting limit` | `-fbracket-depth=131072` |
+| **Constant-evaluation budget** | the reflection backend, whose deduplication is an ordinary loop rather than instantiations | `not a constant expression`, pointing at the splice rather than at the loop | `-fconstexpr-steps` |
+| **CMake picks the wrong standard** for the P2996 fork | building the reflection backend | a wall of errors from inside `<meta>`; reflection was silently off because CMake settled on `-std=gnu++2b` | `cmake/toolchains/clang-p2996.cmake` clears `CMAKE_CXX_STANDARD_DEFAULT` and passes the flags itself |
+
+None of these is reached by ordinary use — the library is for components in the tens to low
+hundreds per translation unit, and the first limit anyone actually meets is compiler memory. They
+are recorded because finding each one cost an afternoon, and because the first two fail in ways that
+do not point at themselves.
 
 ## Requirements
 

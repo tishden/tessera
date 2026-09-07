@@ -51,9 +51,11 @@ IMPLEMENTATIONS = {
     # Transitive dependency resolution with a topological sort, i.e. what `tessera::resolve` costs
     # over `assembly`, which flattens a list that is already complete.
     "resolve": 6,
+    # The same resolution over a chain, where depth equals size: the instantiation-depth limit.
+    "resolve_chain": 7,
 }
 
-BACKEND_DEPENDENT = ("assembly", "algebra", "resolve")
+BACKEND_DEPENDENT = ("assembly", "algebra", "resolve", "resolve_chain")
 
 BACKEND_MACRO = {
     "auto": None,
