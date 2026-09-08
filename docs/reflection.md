@@ -7,6 +7,10 @@ place, what will change, and what becomes possible that is out of reach today.
 
 ## Status today — a full implementation, not a backend
 
+**Status, briefly: this is no longer experimental-toolchain-only.** GCC 16 builds it, CI checks it on
+every push, and the whole suite passes. What *is* still worth knowing is that the compile-time win
+differs sharply between the two implementations that exist — [benchmarks.md §1e](benchmarks.md).
+
 Reflection is no longer just a way to deduplicate a list. `detail::refl` implements **all five
 operations** of the algebra — `unique_into`, `splice_unique_into`, `concat_into`, `select_into`,
 `nth` — and selecting it (`-DTESSERA_ALGEBRA_BACKEND=REFLECTION`) makes every list operation in the
@@ -31,7 +35,32 @@ cost is not 15 MiB but nothing measurable.
 
 ### Getting a toolchain
 
-No released compiler qualifies: Clang 22 and GCC 15 have neither the `^^` operator nor the header.
+**GCC 16 qualifies.** Released in April 2026, it implements P2996R13 behind `-freflection`, defines
+`__cpp_impl_reflection` and ships `<meta>` — so `config.hpp` detects it with no vendor-specific
+probe at all, and `cmake/toolchains/gcc-16-reflection.cmake` supplies the flags:
+
+```bash
+cmake -S . -B build-reflection -G Ninja \
+      -DCMAKE_TOOLCHAIN_FILE=cmake/toolchains/gcc-16-reflection.cmake \
+      -DTESSERA_GCC16_ROOT=/opt/gcc-16.2.0 \
+      -DTESSERA_ALGEBRA_BACKEND=REFLECTION
+cmake --build build-reflection && ctest --test-dir build-reflection --output-on-failure
+```
+
+Two things GCC taught that the fork could not. `__has_feature(reflection)` answers **0** on GCC even
+with `-freflection` — the macro probe is the one that works, and it is fortunate `config.hpp` tries
+it first. And `<meta>` exists in libstdc++ *without* the flag, while `__cpp_impl_reflection` does
+not; gating on the header rather than the macro would have enabled the backend on a compiler that
+cannot compile it.
+
+The measured result is the other half of the story: on GCC the reflection backend costs a constant
+factor less memory than the template one and the advantage shrinks with size, where on the fork the
+cost disappears entirely. See [benchmarks.md §1e](benchmarks.md) — "reflection costs no compiler
+memory" is a fact about Clang's implementation, not about reflection.
+
+### Getting the reference fork
+
+Clang 22 and GCC 15 have neither the `^^` operator nor the header.
 
 ```bash
 curl -fLO https://s3.amazonaws.com/compiler-explorer/opt/clang-bb-p2996-trunk-<date>.tar.xz

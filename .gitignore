@@ -18,3 +18,5 @@ compile_commands.json
 # Downloaded P2996 toolchain and its tarball (see docs/reflection.md)
 toolchain/
 .p2996-download/
+gcc16/
+.gcc16-download/

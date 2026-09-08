@@ -67,7 +67,9 @@ using unique_into = [:unique_into_info<Target, Ts...>():];
 template<template<class...> class Target, class... Ls>
 consteval std::meta::info splice_unique_into_info() {
     std::vector<std::meta::info> kept;
-    const auto splice = [&kept](std::meta::info list) {
+    // The fold below never calls it when the pack is empty (`of<>`, `concat_t<>`), which GCC
+    // reports as set-but-unused.
+    [[maybe_unused]] const auto splice = [&kept](std::meta::info list) {
         for (const std::meta::info element : std::meta::template_arguments_of(list)) {
             push_unique(kept, element);
         }
@@ -83,7 +85,9 @@ using splice_unique_into = [:splice_unique_into_info<Target, Ls...>():];
 template<template<class...> class Target, class... Ls>
 consteval std::meta::info concat_into_info() {
     std::vector<std::meta::info> all;
-    const auto append = [&all](std::meta::info list) {
+    // The fold below never calls it when the pack is empty (`of<>`, `concat_t<>`), which GCC
+    // reports as set-but-unused.
+    [[maybe_unused]] const auto append = [&all](std::meta::info list) {
         for (const std::meta::info element : std::meta::template_arguments_of(list)) {
             all.push_back(element);
         }

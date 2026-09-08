@@ -40,8 +40,12 @@ target_link_libraries(my_app PRIVATE tessera::tessera)
 ```
 
 **C++23** — the library uses explicit object parameters. Clang 18+, GCC 14+, MSVC 19.40+. Tested on
-Clang 21, Clang 22 (portable, fold and builtin backends), GCC 15, and the P2996 fork of Clang for
-the reflection backend; CI covers Clang 18 and GCC 14 on every backend they can build.
+Clang 21, Clang 22 (portable, fold and builtin backends), GCC 15, GCC 16 and the P2996 fork of Clang
+(all four backends); CI covers Clang 18 and GCC 14 on every backend they can build.
+
+The **reflection backend needs a compiler with P2996**. That is no longer only the experimental fork:
+**GCC 16** implements it behind `-freflection`, and
+`cmake/toolchains/gcc-16-reflection.cmake` sets the flags CMake does not yet know to set.
 
 | | |
 |---|---|
@@ -179,7 +183,7 @@ Choosing between them is a namespace alias. The public types never mention eithe
 |---|---|---|
 | `PORTABLE` (default) | any C++23 compiler | a fold for short lists, divide and conquer above 256, membership through a base-class table |
 | `BUILTIN` | Clang 22+ | the same, with `__builtin_dedup_pack` for the deduplication step |
-| `REFLECTION` | P2996 (`<meta>` or `<experimental/meta>`) | one `consteval` pass over `std::meta::info` per operation, one `substitute` at the end |
+| `REFLECTION` | P2996 — GCC 16 `-freflection`, or the Bloomberg fork of Clang | one `consteval` pass over `std::meta::info` per operation, one `substitute` at the end |
 | `FOLD` | any C++23 compiler | the textbook linear fold, kept as the benchmark reference |
 
 The operations take the *destination template*, so `tessera::of<...>` produces a `mosaic` in one
@@ -224,8 +228,8 @@ the compile-time assembly buys:
 * the practical range is components **in the tens to low hundreds** per translation unit. Past that
   the answer is fewer types per translation unit, not a cleverer metafunction.
 
-**What reflection changes.** Measured on the P2996 fork, where both implementations can be built and
-compared, deduplication on its own over a 32× range:
+**What reflection changes — and on which compiler.** Deduplication measured on its own, over a 32×
+range, on the Bloomberg P2996 fork of Clang:
 
 | type mentions | templates | | reflection | |
 |---|---|---|---|---|
@@ -235,11 +239,30 @@ compared, deduplication on its own over a 32× range:
 | 16 000 | — | — |  434.78 s | **−12 MiB** |
 | 32 000 | — | — | 1769.78 s | **−21 MiB** |
 
-Deduplicating with reflection costs the compiler **no measurable memory at all** — the peak of the
-translation unit that deduplicates is the peak of the one that does not, and the difference is as
-often negative as positive. The template implementation over the same range grows ×4 per doubling
-and passes 21 GiB. Both are quadratic in *time*, and reflection wins about a fifth of it: it is a
-cheaper representation for the same algorithm, not a better algorithm.
+There, deduplicating with reflection costs the compiler **no measurable memory at all**: the peak of
+the translation unit that deduplicates is the peak of the one that does not, and the difference is as
+often negative as positive, while the template path grows ×4 per doubling and passes 21 GiB.
+
+**That result is Clang's, not reflection's.** GCC 16 — the first released compiler to implement
+P2996 — runs the same experiment like this:
+
+| type mentions | templates | | reflection | | advantage |
+|---|---|---|---|---|---|
+| | time | compiler memory | time | compiler memory | |
+| 1 000 |  2.66 s |  226 MiB |  2.11 s |  119 MiB | 1.90× memory |
+| 2 000 | 10.17 s |  798 MiB |  8.72 s |  470 MiB | 1.70× memory |
+| 4 000 | 45.29 s | 2773 MiB | 34.42 s | 1898 MiB | 1.46× memory |
+
+Quadratic on both paths, ×4 per doubling, and the advantage *shrinks* as N grows. So on GCC the
+reflection backend buys a constant factor; on the fork it removes the cost entirely. The difference
+between those two is implementation quality in the constant evaluator, and today the fork is far
+ahead of it.
+
+What holds on both compilers is what the numbers were collected for: deduplication stays quadratic in
+time everywhere, and reflection is a cheaper *representation* for the same algorithm rather than a
+better algorithm. If compiler memory is the thing killing your CI, measure it on **your** compiler
+before trusting any of this — [docs/benchmarks.md §1e](docs/benchmarks.md) is that comparison in
+full.
 
 ## When not to use it
 

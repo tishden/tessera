@@ -93,30 +93,19 @@ consteval std::string_view type_name() noexcept {
 ///       the caller wants.
 template<class Aggregate>
 consteval auto member_type_reflections() -> std::vector<std::meta::info> {
+    // The access-context parameter arrived in P2996R10 and is what C++26 standardizes; both
+    // implementations that exist have it. There used to be an `if constexpr` here selecting a
+    // pre-R10 single-argument overload, and it had to go: a discarded `if constexpr` branch is
+    // still parsed, an arity mismatch is diagnosable without instantiating anything, and GCC 16
+    // rightly reports it as an error rather than a warning. A dead branch that breaks a released
+    // compiler is worse than no branch, so the requirement is asserted instead.
+    static_assert(requires { typename std::meta::access_context; },
+                  "tessera: this reflection implementation predates P2996R10 and is not supported");
+
     std::vector<std::meta::info> types;
-    // P2996R10 added an access-context parameter; earlier revisions take the reflection alone.
-    // The probe tests for the *type*, not for a call: `access_context::current()` is consteval, and
-    // a consteval call inside a requires-expression is not a constant expression there, so the
-    // obvious call-shaped probe would always answer "no".
-    if constexpr (requires { typename std::meta::access_context; }) {
-        for (const std::meta::info member :
-             std::meta::nonstatic_data_members_of(^^Aggregate, std::meta::access_context::current())) {
-            types.push_back(std::meta::type_of(member));
-        }
-    } else {
-// The discarded branch of an `if constexpr` is still parsed, so naming the pre-R10 overload warns
-// even on a toolchain that never takes this path. The suppression is Clang-only because Clang is
-// the only compiler that has reflection to warn about.
-#  if defined(__clang__)
-#    pragma clang diagnostic push
-#    pragma clang diagnostic ignored "-Wdeprecated-declarations"
-#  endif
-        for (const std::meta::info member : std::meta::nonstatic_data_members_of(^^Aggregate)) {
-            types.push_back(std::meta::type_of(member));
-        }
-#  if defined(__clang__)
-#    pragma clang diagnostic pop
-#  endif
+    for (const std::meta::info member :
+         std::meta::nonstatic_data_members_of(^^Aggregate, std::meta::access_context::current())) {
+        types.push_back(std::meta::type_of(member));
     }
     return types;
 }

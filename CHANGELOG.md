@@ -6,6 +6,40 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Added — GCC 16
+
+* **The reflection backend builds on a released compiler.** GCC 16.1 (April 2026) implements P2996R13
+  behind `-freflection`; the whole suite passes with `TESSERA_ALGEBRA_BACKEND=REFLECTION` on GCC
+  16.2, and `graph.test.cpp` and `algebra_backends.test.cpp` pin exact types, so passing under both
+  selections is the assertion that the two implementations agree there too.
+* `cmake/toolchains/gcc-16-reflection.cmake` — CMake releases predating GCC 16 do not know it can do
+  C++26 and silently settle on an older `-std=`, which switches reflection off and produces errors
+  from inside `<meta>`. Same trap, same fix, as the clang-p2996 toolchain file.
+* `.github/workflows/reflection.yml` now has two jobs: GCC 16 runs on every push and pull request,
+  because a released compiler regressing is a library bug; the Bloomberg fork stays weekly and
+  non-blocking, because it tracks a moving proposal. Both toolchains are cached.
+* [docs/benchmarks.md §1e](docs/benchmarks.md) — the §1c experiment repeated on GCC 16, where it does
+  **not** reproduce. Reflection there costs 119 → 470 → 1898 MiB across the same range, growing ×4
+  per doubling exactly like the template path, with an advantage that shrinks from 1.90× to 1.46× as
+  N grows. "Deduplication through reflection costs no compiler memory" is a property of Clang's
+  constant evaluator, not of reflection; what holds on both compilers is that the algorithm stays
+  quadratic and reflection is a cheaper representation rather than a better algorithm.
+
+### Fixed
+
+* **`reflect.hpp` did not compile on GCC 16.** `member_type_reflections` selected between the
+  P2996R10 access-context overload and a pre-R10 one with `if constexpr`. A discarded `if constexpr`
+  branch is still parsed, an arity mismatch needs no instantiation to diagnose, and GCC 16's
+  `-Wtemplate-body` makes it an error rather than the warning a Clang-only pragma used to suppress.
+  Both existing implementations have `access_context`, so the dead branch is gone and the
+  requirement is a `static_assert` instead.
+* Two lambdas in `algebra_reflection.hpp` are now `[[maybe_unused]]`: with an empty pack (`of<>`,
+  `concat_t<>`) the fold never calls them, which GCC reports as set-but-unused. The build is warning
+  free on Clang 21, GCC 16 and the fork.
+* The compile-time benchmark step in the reflection workflow passed `--extra "-O0 …"`, which argparse
+  reads as a missing argument because the value starts with a dash. It never ran; it is `--extra=…`
+  now.
+
 ### Added — dependency resolution
 
 * **`tessera::resolve<Roots...>` / `resolved_t<Roots...>`** (`tessera/graph.hpp`): the transitive

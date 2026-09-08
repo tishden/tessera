@@ -232,7 +232,9 @@ enough to say what would have happened without watching it happen.
   positive. The template implementation over the same range goes 494 → 1992 → 7857 MiB, ×3.94 to
   ×4.03 per doubling: exactly quadratic, exactly as many retained class specializations as the
   algorithm creates. This supersedes §1b: the 15 MiB measured there was not a small cost but the
-  noise floor of a comparison that still had the mosaic's own allocation in both sides.
+  noise floor of a comparison that still had the mosaic's own allocation in both sides. It is also
+  specific to this compiler — see §1e, where GCC 16 runs the same experiment and the memory does
+  *not* disappear.
 * **Both are quadratic in time, and reflection is quadratic with a smaller constant.** The scan path
   goes ×4.21, ×4.10, ×4.03, ×4.00, ×4.07 per doubling — textbook. It is doing the same membership
   test the template implementation does; it just is not materialising a type for each intermediate
@@ -408,6 +410,63 @@ compiler (`--include` points the benchmark at a second copy of the headers):
 
 Identical within run-to-run noise: the traversal is templates that nothing instantiates until
 `resolve` is named.
+
+## 1e. The same measurement on GCC 16 — and why the memory result does not travel
+
+GCC 16.1 (April 2026) is the first *released* compiler to implement P2996, behind `-freflection`.
+That makes the reflection backend buildable without an experimental fork, and it makes §1c's headline
+result checkable on a second implementation. It does not survive the check.
+
+```bash
+python3 benchmarks/run_compile_bench.py --compiler <gcc-16>/bin/g++ --std c++26 \
+        --only setup,algebra --sizes 250,500,1000 --backends portable,reflection --repeats 1 \
+        --extra="-O0 -freflection -fconstexpr-ops-limit=4000000000 -ftemplate-depth=16384"
+```
+
+GCC 16.2.0, net of `setup`, so this is the price of deduplication alone:
+
+| type mentions | templates | | reflection | | reflection's advantage |
+|---|---|---|---|---|---|
+| | time | memory | time | memory | |
+| 1 000 |  2.66 s |  226 MiB |  2.11 s |  119 MiB | 1.26× time, 1.90× memory |
+| 2 000 | 10.17 s |  798 MiB |  8.72 s |  470 MiB | 1.17× time, 1.70× memory |
+| 4 000 | 45.29 s | 2773 MiB | 34.42 s | 1898 MiB | 1.32× time, 1.46× memory |
+
+The same rows on clang-p2996, from §1c:
+
+| type mentions | templates | | reflection | |
+|---|---|---|---|---|
+| 1 000 |  3.91 s |  494 MiB |  1.56 s | **−1 MiB** |
+| 2 000 | 12.98 s | 1992 MiB |  6.57 s | **−2 MiB** |
+| 4 000 | 43.69 s | 7857 MiB | 26.95 s | **−2 MiB** |
+
+### Reading the two together
+
+**"Deduplication through reflection costs no memory" is a property of Clang's implementation, not of
+reflection.** On GCC 16 the reflection path allocates 119 → 470 → 1898 MiB across the same range,
+growing ×3.95 and ×4.04 per doubling — quadratic, exactly like the template path beside it. Clang's
+fork retains nothing measurable; GCC's constant evaluator evidently retains the `std::meta::info`
+vectors much as the template implementation retains class specializations.
+
+**And the advantage shrinks with N**: 1.90× → 1.70× → 1.46×. Two curves with the same exponent and
+different constants converge in ratio as the constants stop mattering. On Clang the exponent itself
+differs — one curve is quadratic and the other is flat — which is why that gap widens instead.
+
+**What holds on both compilers** is the claim the numbers were collected for: reflection is a cheaper
+*representation* for the same algorithm, not a better algorithm. Deduplication stays quadratic in
+time everywhere, on both implementations, on both compilers. What varies is how much of the
+intermediate state the compiler chooses to keep — and that turns out to be an implementation quality
+question, currently answered far better by the Bloomberg fork than by GCC.
+
+**Do not compare the absolute numbers across the two tables.** Different front ends: GCC's *template*
+path is itself about three times cheaper in memory than Clang's over this range (226 against 494 MiB
+at 1 000 mentions, 2773 against 7857 at 4 000). Only the within-toolchain ratios and the growth
+exponents mean anything here.
+
+The practical reading for anyone choosing today: reflection is worth having on either compiler, and
+on GCC 16 it buys a constant factor rather than an asymptote. If the reason you want it is that
+compiler memory is what kills your CI, check it on your compiler before believing a benchmark —
+including this one.
 
 ## 2. Run time and object memory
 

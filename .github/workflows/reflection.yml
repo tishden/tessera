@@ -1,25 +1,37 @@
 # Copyright 2026 Denis Tishkov
 # SPDX-License-Identifier: Apache-2.0
 #
-# The reflection backend cannot be built by any released toolchain, so it gets its own workflow
-# rather than a column in the CI matrix: it fetches the P2996 build of Clang that Compiler Explorer
-# publishes and builds the library against it.
+# Two toolchains can build the reflection backend, and they are here for different reasons.
 #
-# It is not a check a pull request has to pass — the toolchain it needs is a moving target — but it
-# runs weekly, so that the day the backend stops matching the fork is the day CI says so.
+#   gcc-16      — a *released* compiler (16.1, April 2026) implementing P2996R13 behind
+#                 -freflection. This one is a real check: it runs on every push and pull request,
+#                 because a released compiler regressing is a bug in the library.
+#
+#   clang-p2996 — the Bloomberg reference fork. It tracks a proposal that is still moving, so it
+#                 cannot gate a pull request; it runs weekly, so that the day the backend stops
+#                 matching the fork is the day CI says so. It is also, so far, the implementation
+#                 where reflection actually costs no compiler memory — see docs/benchmarks.md.
+#
+# Neither compiler ships in the runner image, so both are fetched from the builds Compiler Explorer
+# publishes, and both are cached by name.
 
-name: reflection (experimental)
+name: reflection
 
 on:
+  push:
+    branches: [main]
+  pull_request:
   workflow_dispatch:
   schedule:
     - cron: "0 4 * * 1"
 
 env:
-  P2996_BUILD: clang-bb-p2996-trunk-20260808
+  GCC16_BUILD: gcc-16.2.0
+  P2996_BUILD: clang-bb-p2996-trunk-20260903
 
 jobs:
-  reflection:
+  gcc-16:
+    name: GCC 16 (released)
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
@@ -27,17 +39,87 @@ jobs:
       - name: Install ninja
         run: sudo apt-get update && sudo apt-get install -y ninja-build
 
+      - name: Cache the GCC 16 build
+        id: cache-gcc
+        uses: actions/cache@v4
+        with:
+          path: gcc16
+          key: ${{ env.GCC16_BUILD }}
+
+      - name: Fetch GCC 16
+        if: steps.cache-gcc.outputs.cache-hit != 'true'
+        run: |
+          curl -fL -o gcc16.tar.xz \
+            "https://s3.amazonaws.com/compiler-explorer/opt/${GCC16_BUILD}.tar.xz"
+          mkdir -p gcc16
+          tar -xf gcc16.tar.xz -C gcc16 --strip-components=1
+
+      - name: Check that this build still speaks reflection
+        run: |
+          gcc16/bin/g++ --version
+          # Unlike the fork, GCC defines a feature-test macro — so the probe can be a macro check.
+          cat > probe.cpp <<'EOF'
+          #include <meta>
+          #if !defined(__cpp_impl_reflection)
+          #  error "-freflection did not enable reflection"
+          #endif
+          constexpr auto r = ^^int;
+          static_assert(sizeof(typename [:r:]) == sizeof(int));
+          int main() {}
+          EOF
+          gcc16/bin/g++ -std=c++26 -freflection probe.cpp -o /dev/null
+
+      - name: Build and test with the reflection backend
+        run: |
+          cmake -S . -B build-reflection -G Ninja \
+                -DCMAKE_TOOLCHAIN_FILE=cmake/toolchains/gcc-16-reflection.cmake \
+                -DTESSERA_GCC16_ROOT=$PWD/gcc16 \
+                -DTESSERA_ALGEBRA_BACKEND=REFLECTION
+          cmake --build build-reflection
+          ctest --test-dir build-reflection --output-on-failure
+          ./build-reflection/tests/tessera_tests | head -1   # must report the reflection backend
+
+      - name: Build and test with the template backend on the same compiler
+        run: |
+          # graph.test.cpp and algebra_backends.test.cpp pin exact resolved types, so the suite
+          # passing under both selections is the assertion that the two implementations agree.
+          cmake -S . -B build-portable -G Ninja \
+                -DCMAKE_TOOLCHAIN_FILE=cmake/toolchains/gcc-16-reflection.cmake \
+                -DTESSERA_GCC16_ROOT=$PWD/gcc16 \
+                -DTESSERA_ALGEBRA_BACKEND=PORTABLE
+          cmake --build build-portable
+          ctest --test-dir build-portable --output-on-failure
+
+  clang-p2996:
+    name: clang-p2996 (experimental)
+    runs-on: ubuntu-24.04
+    # The fork tracks a moving proposal; a failure here is news, not a broken pull request.
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install ninja
+        run: sudo apt-get update && sudo apt-get install -y ninja-build
+
+      - name: Cache the P2996 build
+        id: cache-clang
+        uses: actions/cache@v4
+        with:
+          path: toolchain
+          key: ${{ env.P2996_BUILD }}
+
       - name: Fetch the P2996 build of Clang
+        if: steps.cache-clang.outputs.cache-hit != 'true'
         run: |
           curl -fL -o clang-p2996.tar.xz \
             "https://s3.amazonaws.com/compiler-explorer/opt/${P2996_BUILD}.tar.xz"
           mkdir -p toolchain
           # The archive is ./<build>/…, so two components come off.
           tar -xf clang-p2996.tar.xz -C toolchain --strip-components=2
-          toolchain/bin/clang++ --version
 
       - name: Check that this build still speaks reflection
         run: |
+          toolchain/bin/clang++ --version
           # The fork defines no feature-test macro; the only reliable probe is to compile something.
           cat > probe.cpp <<'EOF'
           #include <experimental/meta>
@@ -55,13 +137,10 @@ jobs:
                 -DTESSERA_ALGEBRA_BACKEND=REFLECTION
           cmake --build build-reflection
           ctest --test-dir build-reflection --output-on-failure
-          ./build-reflection/tests/tessera_tests | head -1   # must report the reflection backend
+          ./build-reflection/tests/tessera_tests | head -1
 
       - name: Compare the backends on the same toolchain
         run: |
-          # dedup_backends.test.cpp instantiates every implementation the compiler can compile and
-          # asserts they produce identical types; building with the portable backend selected runs
-          # the same comparison from the other side.
           export TESSERA_P2996_ROOT=$PWD/toolchain
           cmake -S . -B build-portable -G Ninja \
                 -DCMAKE_TOOLCHAIN_FILE=cmake/toolchains/clang-p2996.cmake \
@@ -74,4 +153,4 @@ jobs:
           python3 benchmarks/run_compile_bench.py \
                   --compiler "$PWD/toolchain/bin/clang++" --std c++26 \
                   --sizes 16,32,64,128 --backends portable,fold,reflection --repeats 1 \
-                  --extra "-O0 -stdlib=libc++ -freflection-latest -fconstexpr-steps=1000000000"
+                  --extra="-O0 -stdlib=libc++ -freflection-latest -fconstexpr-steps=1000000000"
