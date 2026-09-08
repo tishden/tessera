@@ -254,9 +254,14 @@ P2996 — runs the same experiment like this:
 | 4 000 | 45.29 s | 2773 MiB | 34.42 s | 1898 MiB | 1.46× memory |
 
 Quadratic on both paths, ×4 per doubling, and the advantage *shrinks* as N grows. So on GCC the
-reflection backend buys a constant factor; on the fork it removes the cost entirely. The difference
-between those two is implementation quality in the constant evaluator, and today the fork is far
-ahead of it.
+reflection backend buys a constant factor; on the fork it removes the cost entirely.
+
+The reason has nothing to do with reflection: **GCC's constant evaluator allocates in proportion to
+how much it evaluates**, for any `constexpr` code — a bare serial loop with no types in it costs GCC
+265 MiB at a million iterations and 3.8 GiB at sixteen million, where Clang stays flat at 79 MiB
+however long it runs. Deduplication performs a quadratic number of evaluation steps, so on GCC the
+memory follows. Moving work from template instantiation into constant evaluation changes which pool
+the memory comes from; only on the fork does it stop being spent.
 
 What holds on both compilers is what the numbers were collected for: deduplication stays quadratic in
 time everywhere, and reflection is a cheaper *representation* for the same algorithm rather than a

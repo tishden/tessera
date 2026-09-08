@@ -24,6 +24,13 @@ All notable changes to this project are documented here. The format follows
   N grows. "Deduplication through reflection costs no compiler memory" is a property of Clang's
   constant evaluator, not of reflection; what holds on both compilers is that the algorithm stays
   quadratic and reflection is a cheaper representation rather than a better algorithm.
+* The mechanism, measured rather than guessed: **GCC's constant evaluator allocates in proportion to
+  how much it evaluates**, for any `constexpr` code. A bare serial loop with no types and no
+  allocation costs GCC 265 MiB at a million iterations and 3.8 GiB at sixteen million; Clang stays
+  flat at 79 MiB however long it runs. Deduplication performs a quadratic number of evaluation steps,
+  so on GCC the memory follows the steps — which is a different mechanism from the template path's
+  retained class specializations, producing the same curve. On GCC, moving work into constant
+  evaluation changes which pool the memory comes from rather than whether it is spent.
 
 ### Fixed
 

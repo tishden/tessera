@@ -444,9 +444,43 @@ The same rows on clang-p2996, from §1c:
 
 **"Deduplication through reflection costs no memory" is a property of Clang's implementation, not of
 reflection.** On GCC 16 the reflection path allocates 119 → 470 → 1898 MiB across the same range,
-growing ×3.95 and ×4.04 per doubling — quadratic, exactly like the template path beside it. Clang's
-fork retains nothing measurable; GCC's constant evaluator evidently retains the `std::meta::info`
-vectors much as the template implementation retains class specializations.
+growing ×3.95 and ×4.04 per doubling — quadratic, exactly like the template path beside it.
+
+### Why: it is the constant evaluator, and it has nothing to do with reflection
+
+The mechanism is not what it looks like. It is not that GCC retains the `std::meta::info` vectors —
+it is that **GCC's constant evaluator allocates in proportion to how much it evaluates**, for any
+`constexpr` code at all. A loop with a serial dependency, no types, no reflection and no allocation,
+compiled with `-fconstexpr-loop-limit` raised far enough to let it finish:
+
+```cpp
+consteval unsigned long long work(unsigned long long n) {
+    unsigned long long acc = 1;
+    for (unsigned long long i = 0; i < n; ++i)
+        acc = acc * 6364136223846793005ULL + 1442695040888963407ULL + i;
+    return acc;
+}
+constexpr unsigned long long r = work(N);
+```
+
+| iterations | GCC 16 | clang-p2996 |
+|---|---|---|
+|  1 000 000 |  2.47 s /  265 MiB | 1.97 s / **79 MiB** |
+|  4 000 000 | 10.97 s /  967 MiB | 7.86 s / **79 MiB** |
+| 16 000 000 | 46.59 s / 3779 MiB | 31.26 s / **79 MiB** |
+
+GCC grows ×3.6 and ×3.9 per ×4 steps — linear in evaluation steps, roughly 250 bytes each, never
+reclaimed while the evaluation runs. Clang is flat at 79 MiB no matter how much it evaluates.
+
+That explains §1c and this section together. Deduplication is a quadratic scan, so it performs a
+quadratic number of constant-evaluation steps; on GCC the memory follows the steps, and the result is
+quadratic memory that merely happens to look like the template implementation's. Two different
+mechanisms — retained class specializations on one side, unreclaimed evaluator allocations on the
+other — producing the same curve.
+
+The practical form of this: on GCC, moving work out of template instantiation and into constant
+evaluation **changes which pool the memory comes from, not whether it is spent**. On Clang it
+genuinely stops being spent. That is the whole of the difference between the two tables above.
 
 **And the advantage shrinks with N**: 1.90× → 1.70× → 1.46×. Two curves with the same exponent and
 different constants converge in ratio as the constants stop mattering. On Clang the exponent itself
